@@ -5,7 +5,7 @@ require('dotenv').config();
 const seed = async () => {
     console.log('🌱 Iniciando inyección de datos semilla (MVP)...');
     const client = new Client({
-        connectionString: process.env.DB_URL || 'postgresql://postgres:postgres@localhost:5432/ips_db'
+        connectionString: process.env.DATABASE_URL || process.env.DB_URL || 'postgresql://postgres:postgres@localhost:5432/ips_db'
     });
 
     try {
