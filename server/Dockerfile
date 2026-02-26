@@ -48,11 +48,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY server/package*.json ./
+COPY package*.json ./
 
 RUN npm install
 
-COPY server/ .
+COPY . .
 
 EXPOSE 3001
 

@@ -1,6 +1,21 @@
 const db = require('../../db');
 const AIService = require('../../services/AIService');
 const AvailabilityService = require('../../services/AvailabilityService');
+const fs = require('fs');
+const path = require('path');
+
+const catalogPath1 = path.join(__dirname, '../../../../catalogos.json');
+const catalogPath2 = path.join(__dirname, '../../../catalogos.json');
+let catalogData = { Ecografias: [], Radiografias: [] };
+try {
+    if (fs.existsSync(catalogPath1)) {
+        catalogData = JSON.parse(fs.readFileSync(catalogPath1, 'utf8'));
+    } else if (fs.existsSync(catalogPath2)) {
+        catalogData = JSON.parse(fs.readFileSync(catalogPath2, 'utf8'));
+    }
+} catch (e) {
+    console.error("Error loading catalog in WhatsAppController:", e);
+}
 
 let socketIo = null;
 
@@ -44,11 +59,23 @@ const WhatsAppController = {
             const cleanPhone = String(phone).split('@')[0].trim();
             let chatId = `${cleanPhone}@c.us`;
             try {
-                await client.sendMessage(chatId, text);
+                // To avoid "Cannot read properties of undefined (reading 'getChat')" errors
+                // We should ensure the number is valid and the client is ready
+                const numberDetails = await client.getNumberId(chatId);
+                if (numberDetails) {
+                    await client.sendMessage(numberDetails._serialized, text);
+                } else {
+                    console.log(`[AI-BOT] Number not registered for ${cleanPhone}, falling back to @lid`);
+                    await client.sendMessage(`${cleanPhone}@lid`, text);
+                }
             } catch (err) {
-                console.log(`[AI-BOT] Error sending to @c.us, falling back to @lid for phone ${cleanPhone}`);
+                console.log(`[AI-BOT] Error sending to @c.us, falling back to @lid for phone ${cleanPhone}. Error:`, err.message);
                 chatId = `${cleanPhone}@lid`;
-                await client.sendMessage(chatId, text);
+                try {
+                    await client.sendMessage(chatId, text);
+                } catch (lidErr) {
+                    console.error(`[AI-BOT] Failed completely to send message to ${cleanPhone}:`, lidErr.message);
+                }
             }
             await this.logMessage(cleanPhone, text, true);
         } catch (error) {
@@ -57,7 +84,7 @@ const WhatsAppController = {
     },
 
     // Send Booking Confirmation
-    async sendBookingConfirmation(client, phone, appointment, specialtyName, doctorName, patientName) {
+    async sendBookingConfirmation(client, phone, appointment, specialtyName, doctorName, patientName, recommendation) {
         const dateStr = new Date(appointment.start_datetime).toLocaleDateString('es-ES', {
             weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Bogota'
         });
@@ -65,7 +92,13 @@ const WhatsAppController = {
             hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota'
         });
 
-        const message = `✅ *¡Cita Confirmada!*\n\n📅 ${dateStr}\n⏰ ${timeStr}\n🏥 ${specialtyName || ''}\n👨‍⚕️ Dr. ${doctorName || ''}\n👤 ${patientName}\n🔑 Código: *${appointment.confirmation_code}*\n\nPor favor llega 10 minutos antes.`;
+        let message = `✅ *¡Cita Confirmada!*\n\n📅 ${dateStr}\n⏰ ${timeStr}\n🏥 ${specialtyName || ''}\n👨‍⚕️ Dr. ${doctorName || ''}\n👤 ${patientName}\n🔑 Código: *${appointment.confirmation_code}*\n\n`;
+
+        if (recommendation) {
+            message += `*Preparación / Recomendaciones:*\n_${recommendation}_\n\n`;
+        }
+
+        message += `Por favor llega 10 minutos antes.`;
 
         await this.sendMessage(client, phone, message);
     },
@@ -180,15 +213,111 @@ const WhatsAppController = {
 
                 payload.patient_id_number = cedula;
 
-                const specialties = await db.query('SELECT id, name FROM specialties WHERE is_active = TRUE');
-                let txt = '¡Gracias! ¿Para qué especialidad deseas agendar cita? Responde con el número:\n\n';
-                specialties.rows.forEach((s, idx) => {
-                    txt += `${idx + 1}. ${s.name}\n`;
-                });
+                let txt = '¡Gracias! ¿A qué entidad perteneces? Responde con el número correspondinte:\n\n';
+                txt += '1. Particular\n';
+                txt += '2. ARL\n';
+                txt += '3. SOAT\n';
+                txt += '4. EPS (Alianza Salud, Compensar, etc.)\n';
+                txt += '5. Medicina Prepagada';
+
                 await this.reply(msg, txt);
 
-                payload.specialties = specialties.rows;
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_ENTIDAD', JSON.stringify(payload), phone]
+                );
+                return;
+            }
+            if (session.state === 'AWAITING_ENTIDAD') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const index = parseInt(text);
 
+                if (isNaN(index) || index < 1 || index > 5) {
+                    await this.reply(msg, 'Por favor, responde con un número válido del 1 al 5.');
+                    return;
+                }
+
+                const entidades = ['PARTICULAR', 'ARL', 'SOAT', 'EPS', 'PREPAGADA'];
+                const entidadStr = entidades[index - 1];
+                payload.entidad = entidadStr;
+
+                const getMenuText = async (payloadObj) => {
+                    const specialties = await db.query('SELECT id, name FROM specialties WHERE is_active = TRUE');
+                    let specRows = specialties.rows;
+                    specRows.push({ id: 'catalog-eco', name: 'Ecografías' });
+                    specRows.push({ id: 'catalog-rad', name: 'Radiografías' });
+                    payloadObj.specialties = specRows;
+
+                    let txtStr = '';
+                    specRows.forEach((s, idx) => {
+                        txtStr += `${idx + 1}. ${s.name}\n`;
+                    });
+                    return txtStr;
+                };
+
+                if (entidadStr === 'ARL' || entidadStr === 'SOAT') {
+                    let alertTxt = `⚠️ *IMPORTANTE*: Para agendar citas por ${entidadStr}, debes presentar en ventanilla:\n\n`;
+                    alertTxt += `- Historia Clínica\n- ARL Vigente (si aplica)\n- Certificado laboral (si aplica)\n- Exámenes autorizados\n\n`;
+                    alertTxt += `_Si no presentas esta documentación completa a la hora de llegar, no podrás tomar tu cita._\n\n`;
+                    alertTxt += 'Continuemos. ¿Para qué especialidad deseas agendar cita? Responde con el número correspondiente:\n\n';
+
+                    alertTxt += await getMenuText(payload);
+                    await this.reply(msg, alertTxt);
+
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                        ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]
+                    );
+                    return;
+                } else if (entidadStr === 'EPS' || entidadStr === 'PREPAGADA') {
+                    const txt = `Entendido. Por favor ingresa el *Número de Autorización* de tu servicio.\n\n_Si no lo tienes, será obligatorio presentarlo en ventanilla._`;
+                    await this.reply(msg, txt);
+
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                        ['AWAITING_AUTORIZACION', JSON.stringify(payload), phone]
+                    );
+                    return;
+                } else if (entidadStr === 'PARTICULAR') {
+                    let txt = `Has seleccionado Particular.\n\n¿Para qué especialidad deseas agendar cita? Responde con el número correspondiente:\n\n`;
+                    txt += await getMenuText(payload);
+
+                    await this.reply(msg, txt);
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                        ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]
+                    );
+                    return;
+                }
+            }
+
+            if (session.state === 'AWAITING_AUTORIZACION') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+
+                const authCode = text.trim();
+                const isAllSame = /^(.)\1+$/.test(authCode);
+                const isSequentialAsc = '01234567890123456789'.includes(authCode);
+                const isSequentialDesc = '98765432109876543210'.includes(authCode);
+
+                if (authCode.length < 5 || isAllSame || (isSequentialAsc && authCode.length > 3) || (isSequentialDesc && authCode.length > 3)) {
+                    await this.reply(msg, 'Por favor, ingresa un número de autorización válido. No se permiten números secuenciales o repetidos (ej. 123456 o 1111).');
+                    return;
+                }
+
+                payload.autorizacion = authCode;
+
+                let txt = '¡Perfecto! ¿Para qué especialidad deseas agendar cita? Responde con el número:\n\n';
+                const specialties = await db.query('SELECT id, name FROM specialties WHERE is_active = TRUE');
+                let specRows = specialties.rows;
+                specRows.push({ id: 'catalog-eco', name: 'Ecografías' });
+                specRows.push({ id: 'catalog-rad', name: 'Radiografías' });
+                payload.specialties = specRows;
+
+                specRows.forEach((s, idx) => {
+                    txt += `${idx + 1}. ${s.name}\n`;
+                });
+
+                await this.reply(msg, txt);
                 await db.query(
                     'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
                     ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]
@@ -206,10 +335,186 @@ const WhatsAppController = {
                 }
 
                 const specialty = payload.specialties[index];
-                const doctorId = await AvailabilityService.findDoctorForSpecialty(specialty.id);
+
+                // --- NEW CATALOG CHECK ---
+                if (specialty.id === 'catalog-eco' || specialty.id === 'catalog-rad') {
+                    const catalogKey = specialty.id === 'catalog-eco' ? 'Ecografias' : 'Radiografias';
+                    payload.catalog_type = catalogKey;
+
+                    // Will use this later to fetch dates safely
+                    payload.specialty_name = specialty.name;
+
+                    let txt = `Has seleccionado ${specialty.name}.\n\n`;
+                    txt += `Por favor escribe el nombre del examen que necesitas (ej. "Obstétrica", "Tórax", "Rodilla") o algunas palabras clave.`;
+
+                    await this.reply(msg, txt);
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                        ['AWAITING_CATALOG_SEARCH', JSON.stringify(payload), phone]
+                    );
+                    return;
+                }
+                const newPayload = {
+                    ...payload,
+                    specialty_id: specialty.id,
+                    specialty_name: specialty.name
+                };
+
+                let txt = `Elegiste ${specialty.name}.\n\nPara continuar, ¿Qué tipo de consulta es?\n1. Primera vez\n2. Control`;
+
+                await this.reply(msg, txt);
+
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_CONSULTATION_TYPE', JSON.stringify(newPayload), phone]
+                );
+                return;
+            }
+
+            if (session.state === 'AWAITING_CATALOG_SEARCH') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+
+                // Helper to remove accents and make lowercase
+                const normalizeString = (str) => {
+                    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+                };
+
+                const searchTerm = normalizeString(text);
+
+                const catalogItems = catalogData[payload.catalog_type] || [];
+                const matches = catalogItems.filter(item => normalizeString(item.name).includes(searchTerm));
+
+                if (matches.length === 0) {
+                    await this.reply(msg, `No encontré ningún examen que coincida con "${text}". Por favor intenta con otra palabra clave o nombre.`);
+                    return;
+                }
+
+                if (matches.length > 8) {
+                    await this.reply(msg, `Encontré demasiados exámenes que coinciden con "${text}" (${matches.length}). Por favor sé más específico.`);
+                    return;
+                }
+
+                if (matches.length === 1) {
+                    const item = matches[0];
+                    payload.catalog_item = item;
+
+                    let txt = `Encontré este examen: *${item.name}*.\n\n`;
+                    if (payload.entidad === 'PARTICULAR') {
+                        txt += `El costo parcial estimado es de *$${item.price}*.\n\n`;
+                    }
+                    txt += `¿Deseas agendar este examen? Responde *SI* para continuar o *NO* para buscar otro.`;
+
+                    await this.reply(msg, txt);
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                        ['AWAITING_CATALOG_CONFIRM', JSON.stringify(payload), phone]
+                    );
+                    return;
+                }
+
+                // Multiple
+                payload.catalog_matches = matches;
+                let txt = `Encontré estas opciones. Responde con el número de tu examen:\n\n`;
+                matches.forEach((m, idx) => {
+                    txt += `${idx + 1}. ${m.name}\n`;
+                });
+
+                await this.reply(msg, txt);
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_CATALOG_SELECTION', JSON.stringify(payload), phone]
+                );
+                return;
+            }
+
+            if (session.state === 'AWAITING_CATALOG_SELECTION') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const idx = parseInt(text) - 1;
+
+                if (isNaN(idx) || idx < 0 || idx >= payload.catalog_matches.length) {
+                    await this.reply(msg, 'Por favor, responde con un número válido de la lista.');
+                    return;
+                }
+
+                const item = payload.catalog_matches[idx];
+                payload.catalog_item = item;
+
+                let txt = `Perfecto. Seleccionaste: *${item.name}*.\n\n`;
+                if (payload.entidad === 'PARTICULAR') {
+                    txt += `El costo estimado para este examen es de *$${item.price}*.\n\n`;
+                }
+                txt += `¿Deseas confirmar la agendación para este examen? Responde *SI* o *NO*.`;
+
+                await this.reply(msg, txt);
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_CATALOG_CONFIRM', JSON.stringify(payload), phone]
+                );
+                return;
+            }
+
+            if (session.state === 'AWAITING_CATALOG_CONFIRM') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const resp = text.toLowerCase().trim();
+
+                if (resp === 'no' || resp === 'n') {
+                    await this.reply(msg, `Entendido. Escribe el nombre del examen que buscas de nuevo, o escribe "HOLA" para reiniciar.`);
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1 WHERE phone = $2',
+                        ['AWAITING_CATALOG_SEARCH', phone]
+                    );
+                    return;
+                } else if (resp !== 'si' && resp !== 'sí' && resp !== 's') {
+                    await this.reply(msg, `Por favor responde con *SI* o *NO* para confirmar.`);
+                    return;
+                }
+
+                // Confirmed! Now find availability. As it's generic eco/rad we need to fallback query the DB specialty
+                const isEco = payload.catalog_type === 'Ecografias';
+                const likeQ = isEco ? '%Ecograf%' : 'Radio%'; // fallback
+                const specDb = await db.query('SELECT id FROM specialties WHERE name ILIKE $1 LIMIT 1', [likeQ]);
+
+                let actualSpecId = null;
+
+                if (specDb.rows.length > 0) {
+                    actualSpecId = specDb.rows[0].id;
+                }
+
+                const newPayload = {
+                    ...payload,
+                    specialty_id: actualSpecId,
+                    specialty_name: payload.catalog_item.name
+                };
+
+                let txt = `Excelente.\n\nPara continuar, ¿Qué tipo de consulta es?\n1. Primera vez\n2. Control`;
+
+                await this.reply(msg, txt);
+
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_CONSULTATION_TYPE', JSON.stringify(newPayload), phone]
+                );
+                return;
+            }
+
+            if (session.state === 'AWAITING_CONSULTATION_TYPE') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const resp = text.trim();
+
+                if (resp === '1' || resp.toLowerCase() === 'primera vez') {
+                    payload.consultation_type = 'Primera Vez';
+                } else if (resp === '2' || resp.toLowerCase() === 'control') {
+                    payload.consultation_type = 'Control';
+                } else {
+                    await this.reply(msg, `Por favor responde con 1 (Primera Vez) o 2 (Control).`);
+                    return;
+                }
+
+                // Now find availability
+                const doctorId = await AvailabilityService.findDoctorForSpecialty(payload.specialty_id);
 
                 if (!doctorId) {
-                    await this.reply(msg, `No hay médicos disponibles para ${specialty.name} en este momento. Escribe "HOLA" para empezar de nuevo.`);
+                    await this.reply(msg, `Lo siento, no hay agenda habilitada para ${payload.specialty_name || 'este servicio'} en este momento. Escribe "HOLA" para empezar de nuevo.`);
                     await this.resetConversation(phone);
                     return;
                 }
@@ -228,12 +533,12 @@ const WhatsAppController = {
                 }
 
                 if (availableDates.length === 0) {
-                    await this.reply(msg, `Lo siento, no hay fechas próximas para ${specialty.name}. Escribe "HOLA" para empezar de nuevo.`);
+                    await this.reply(msg, `Lo siento, no hay fechas próximas para ${payload.specialty_name || 'este servicio'}. Escribe "HOLA" para empezar de nuevo.`);
                     await this.resetConversation(phone);
                     return;
                 }
 
-                let txt = `Elegiste ${specialty.name}. ¿Qué fecha prefieres? Responde con el número:\n\n`;
+                let txt = `¿Qué fecha prefieres? Responde con el número:\n\n`;
                 availableDates.forEach((d, idx) => {
                     const dStr = new Date(d + 'T00:00:00-05:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
                     txt += `${idx + 1}. ${dStr}\n`;
@@ -241,16 +546,12 @@ const WhatsAppController = {
 
                 await this.reply(msg, txt);
 
-                const newPayload = {
-                    ...payload,
-                    specialty_id: specialty.id,
-                    specialty_name: specialty.name,
-                    doctor_id: doctorId,
-                    available_dates: availableDates
-                };
+                payload.doctor_id = doctorId;
+                payload.available_dates = availableDates;
+
                 await db.query(
                     'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                    ['AWAITING_DATE', JSON.stringify(newPayload), phone]
+                    ['AWAITING_DATE', JSON.stringify(payload), phone]
                 );
                 return;
             }
@@ -333,7 +634,8 @@ const WhatsAppController = {
                     date: payload.date,
                     time: payload.time,
                     patient_name: payload.patient_name,
-                    patient_id: payload.patient_id_number
+                    patient_id: payload.patient_id_number,
+                    total_price: payload.catalog_item && payload.entidad === 'PARTICULAR' ? payload.catalog_item.price : null
                 };
 
                 await db.query(
@@ -446,7 +748,12 @@ const WhatsAppController = {
                 const doctor = doctors.rows.find(d => d.id === data.doctorId);
                 const docName = doctor?.full_name;
 
-                await this.sendBookingConfirmation(client, phone, appointment, specName, docName, data.patient_name);
+                let recommendation = null;
+                if (payload.catalog_item && payload.catalog_item.recommendation) {
+                    recommendation = payload.catalog_item.recommendation;
+                }
+
+                await this.sendBookingConfirmation(client, phone, appointment, specName, docName, data.patient_name, recommendation);
 
                 await this.resetConversation(phone);
             } catch (error) {
@@ -519,7 +826,8 @@ const WhatsAppController = {
         // Ask for confirmation instead of booking immediately
         const appointmentData = {
             ...validated,
-            doctorId
+            doctorId,
+            total_price: aiResponse.extracted_data.total_price || null
         };
 
         const specName = specialties.find(s => s.id === validated.specialty_id)?.name;
@@ -646,13 +954,18 @@ const WhatsAppController = {
         const endDatetime = new Date(new Date(startStr).getTime() + 30 * 60000).toISOString();
         const confCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-        const result = await db.query(`
-            INSERT INTO appointments 
-            (patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, status, source, confirmation_code)
-            VALUES ($1, $2, $3, $4, $5, $6, 'BOOKED', 'WHATSAPP', $7)
-            RETURNING *
-        `, [patientId, doctorId, data.specialty_id, startStr, endDatetime, 30, confCode]);
+        let notes = null;
+        if (data.consultation_type) {
+            notes = `Tipo de Consulta: ${data.consultation_type}`;
+        }
 
+        const result = await db.query(
+            `INSERT INTO appointments 
+             (patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, source, confirmation_code, status, total_price, notes) 
+             VALUES ($1, $2, $3, $4, $5, $6, 'WHATSAPP', $7, 'BOOKED', $8, $9) 
+             RETURNING *`,
+            [patientId, doctorId, data.specialty_id, startStr, endDatetime, 30, confCode, data.total_price || null, notes]
+        );
         return result.rows[0];
     },
 

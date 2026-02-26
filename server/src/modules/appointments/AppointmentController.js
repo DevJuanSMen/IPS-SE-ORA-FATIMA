@@ -42,7 +42,7 @@ module.exports = (client) => {
         },
 
         async create(req, res) {
-            const { patient_id, doctor_id, specialty_id, start_datetime, source, patient_phone, patient_name } = req.body;
+            const { patient_id, doctor_id, specialty_id, start_datetime, source, patient_phone, patient_name, total_price, notes } = req.body;
             // patient_phone/name might be needed if patient_id is not passed or for notifications
 
             try {
@@ -68,10 +68,10 @@ module.exports = (client) => {
                 // Insert appointment
                 const result = await db.query(
                     `INSERT INTO appointments 
-             (patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, source, confirmation_code, status) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BOOKED') 
+             (patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, source, confirmation_code, status, total_price, notes) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BOOKED', $9, $10) 
              RETURNING *`,
-                    [patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, source || 'ADMIN', confCode]
+                    [patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, source || 'ADMIN', confCode, total_price || null, notes || null]
                 );
 
                 const appointment = result.rows[0];

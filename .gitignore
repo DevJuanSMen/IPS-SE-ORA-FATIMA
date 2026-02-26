@@ -1,0 +1,13 @@
+# Ignorar scripts locales de Python y extracción de datos
+scripts/
+__pycache__/
+*.pyc
+
+# WhatsApp Web JS
+.wwebjs_auth/
+.wwebjs_cache/
+server/.wwebjs_auth/
+server/.wwebjs_cache/
+
+# Database local data
+db_data/

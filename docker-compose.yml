@@ -34,6 +34,8 @@ services:
     volumes:
       - ./server:/app
       - /app/node_modules
+      # Access catalog file from client assets
+      - ./client/assets/catalogos.json:/app/catalogos.json:ro
       # Use named volume for WhatsApp session for better performance
       - whatsapp_session:/app/.wwebjs_auth
     depends_on:

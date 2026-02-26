@@ -204,6 +204,25 @@ app.use('/api/appointments', authMiddleware(), require('./modules/appointments/a
 app.use('/api/chats', authMiddleware(), require('./modules/chat/chatRoutes')(client));
 app.use('/api/patients', authMiddleware(), require('./modules/patients/patientRoutes'));
 
+app.get('/api/catalog', authMiddleware(), (req, res) => {
+  try {
+    const catalogPath1 = path.join(__dirname, '../catalogos.json'); // /app/catalogos.json
+    const catalogPath2 = path.join(__dirname, '../../catalogos.json'); // root fallback
+
+    if (fs.existsSync(catalogPath1)) {
+      const data = fs.readFileSync(catalogPath1, 'utf8');
+      res.json(JSON.parse(data));
+    } else if (fs.existsSync(catalogPath2)) {
+      const data = fs.readFileSync(catalogPath2, 'utf8');
+      res.json(JSON.parse(data));
+    } else {
+      res.status(404).json({ error: 'Catalog not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Error loading catalog' });
+  }
+});
+
 // Background Jobs
 const AppointmentControllerFactory = require('./modules/appointments/AppointmentController');
 const appointmentController = AppointmentControllerFactory(client);

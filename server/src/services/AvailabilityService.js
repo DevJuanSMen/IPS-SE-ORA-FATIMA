@@ -16,14 +16,27 @@ const AvailabilityService = {
         // Note: date input is expected to be YYYY-MM-DD string
         const dayOfWeek = new Date(date).getDay();
 
-        // Fix for Sunday=0, Monday=1, etc. ensuring it matches DB if needed. 
-        // JS getDay(): 0 (Sun) - 6 (Sat).
-        // Presuming DB uses same standard.
-
-        const schedules = await db.query(
-            'SELECT start_time, end_time FROM doctor_schedules WHERE doctor_id = $1 AND weekday = $2 AND is_active = TRUE',
-            [doctorId, dayOfWeek]
+        // Get schedules. If there is a special_date schedule for this exact date, 
+        // it applies. Otherwise, the regular weekday schedule applies.
+        // We will fetch both and if there are special_date schedules, we ONLY use those.
+        // If not, we use the regular ones.
+        const allSchedules = await db.query(
+            `SELECT start_time, end_time, special_date, weekday 
+             FROM doctor_schedules 
+             WHERE doctor_id = $1 
+             AND is_active = TRUE 
+             AND (special_date = $2 OR (special_date IS NULL AND weekday = $3))`,
+            [doctorId, date, dayOfWeek]
         );
+
+        // Filter: If there are any special dates for today, IGNORE the regular recurring weekday schedules.
+        // Otherwise use the regular ones.
+        const hasSpecialForToday = allSchedules.rows.some(s => s.special_date !== null);
+        const schedules = {
+            rows: allSchedules.rows.filter(s =>
+                hasSpecialForToday ? s.special_date !== null : s.special_date === null
+            )
+        };
 
         if (schedules.rows.length === 0) return [];
 

@@ -115,6 +115,19 @@ const createTables = async () => {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='appointments' AND column_name='reminder_sent') THEN 
         ALTER TABLE appointments ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE; 
       END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='appointments' AND column_name='total_price') THEN 
+        ALTER TABLE appointments ADD COLUMN total_price INTEGER; 
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='doctor_schedules' AND column_name='special_date') THEN 
+        ALTER TABLE doctor_schedules ADD COLUMN special_date DATE; 
+        ALTER TABLE doctor_schedules ALTER COLUMN weekday DROP NOT NULL;
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='appointments' AND column_name='notes') THEN 
+        ALTER TABLE appointments ADD COLUMN notes TEXT; 
+      END IF;
     END $$;
   `;
 
