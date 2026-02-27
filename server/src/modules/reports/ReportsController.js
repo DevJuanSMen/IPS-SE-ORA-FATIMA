@@ -1,4 +1,4 @@
-const db = require('../../db/db');
+const db = require('../../db');
 
 // Helper to get date range from query params (default: last 30 days)
 const getRange = (query) => {
