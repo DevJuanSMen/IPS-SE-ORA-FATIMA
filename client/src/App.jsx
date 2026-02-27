@@ -53,6 +53,8 @@ function App() {
     const [activeAdminSubTab, setActiveAdminSubTab] = useState('services');
 
     // Modals
+    const [showServiceModal, setShowServiceModal] = useState(false);
+    const [currentService, setCurrentService] = useState(null);
     const [showSpecialtyModal, setShowSpecialtyModal] = useState(false);
     const [currentSpecialty, setCurrentSpecialty] = useState(null);
     const [showDoctorModal, setShowDoctorModal] = useState(false);
