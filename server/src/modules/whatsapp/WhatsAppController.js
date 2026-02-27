@@ -213,12 +213,13 @@ const WhatsAppController = {
 
                 payload.patient_id_number = cedula;
 
-                let txt = '¡Gracias! ¿A qué entidad perteneces? Responde con el número correspondinte:\n\n';
+                let txt = '¡Gracias! ¿A qué entidad perteneces? Responde con el número correspondiente:\n\n';
                 txt += '1. Particular\n';
                 txt += '2. ARL\n';
                 txt += '3. SOAT\n';
-                txt += '4. EPS (Alianza Salud, Compensar, etc.)\n';
-                txt += '5. Medicina Prepagada';
+                txt += '4. EPS Alianza Salud\n';
+                txt += '5. EPS Compensar\n';
+                txt += '6. Medicina Prepagada';
 
                 await this.reply(msg, txt);
 
@@ -232,24 +233,21 @@ const WhatsAppController = {
                 const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
                 const index = parseInt(text);
 
-                if (isNaN(index) || index < 1 || index > 5) {
-                    await this.reply(msg, 'Por favor, responde con un número válido del 1 al 5.');
+                if (isNaN(index) || index < 1 || index > 6) {
+                    await this.reply(msg, 'Por favor, responde con un número válido del 1 al 6.');
                     return;
                 }
 
-                const entidades = ['PARTICULAR', 'ARL', 'SOAT', 'EPS', 'PREPAGADA'];
+                const entidades = ['PARTICULAR', 'ARL', 'SOAT', 'ALIANZA SALUD', 'COMPENSAR', 'MEDICINA PREPAGADA'];
                 const entidadStr = entidades[index - 1];
                 payload.entidad = entidadStr;
 
                 const getMenuText = async (payloadObj) => {
-                    const specialties = await db.query('SELECT id, name FROM specialties WHERE is_active = TRUE');
-                    let specRows = specialties.rows;
-                    specRows.push({ id: 'catalog-eco', name: 'Ecografías' });
-                    specRows.push({ id: 'catalog-rad', name: 'Radiografías' });
-                    payloadObj.specialties = specRows;
+                    const services = await db.query('SELECT id, name FROM services WHERE is_active = TRUE ORDER BY name');
+                    payloadObj.services = services.rows;
 
                     let txtStr = '';
-                    specRows.forEach((s, idx) => {
+                    services.rows.forEach((s, idx) => {
                         txtStr += `${idx + 1}. ${s.name}\n`;
                     });
                     return txtStr;
@@ -259,17 +257,26 @@ const WhatsAppController = {
                     let alertTxt = `⚠️ *IMPORTANTE*: Para agendar citas por ${entidadStr}, debes presentar en ventanilla:\n\n`;
                     alertTxt += `- Historia Clínica\n- ARL Vigente (si aplica)\n- Certificado laboral (si aplica)\n- Exámenes autorizados\n\n`;
                     alertTxt += `_Si no presentas esta documentación completa a la hora de llegar, no podrás tomar tu cita._\n\n`;
-                    alertTxt += 'Continuemos. ¿Para qué especialidad deseas agendar cita? Responde con el número correspondiente:\n\n';
+                    alertTxt += 'Continuemos. ¿Para qué *Servicio* deseas agendar cita? Responde con el número correspondiente:\n\n';
 
                     alertTxt += await getMenuText(payload);
                     await this.reply(msg, alertTxt);
 
                     await db.query(
                         'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                        ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]
+                        ['AWAITING_SERVICE', JSON.stringify(payload), phone]
                     );
                     return;
-                } else if (entidadStr === 'EPS' || entidadStr === 'PREPAGADA') {
+                } else if (entidadStr === 'ALIANZA SALUD' || entidadStr === 'COMPENSAR') {
+                    const txt = `¿A qué régimen perteneces en ${entidadStr}?\n\n1. Contributivo\n2. Subsidiado`;
+                    await this.reply(msg, txt);
+
+                    await db.query(
+                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                        ['AWAITING_REGIMEN', JSON.stringify(payload), phone]
+                    );
+                    return;
+                } else if (entidadStr === 'MEDICINA PREPAGADA') {
                     const txt = `Entendido. Por favor ingresa el *Número de Autorización* de tu servicio.\n\n_Si no lo tienes, será obligatorio presentarlo en ventanilla._`;
                     await this.reply(msg, txt);
 
@@ -279,16 +286,39 @@ const WhatsAppController = {
                     );
                     return;
                 } else if (entidadStr === 'PARTICULAR') {
-                    let txt = `Has seleccionado Particular.\n\n¿Para qué especialidad deseas agendar cita? Responde con el número correspondiente:\n\n`;
+                    let txt = `Has seleccionado Particular.\n\n¿Para qué *Servicio* deseas agendar cita? Responde con el número correspondiente:\n\n`;
                     txt += await getMenuText(payload);
 
                     await this.reply(msg, txt);
                     await db.query(
                         'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                        ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]
+                        ['AWAITING_SERVICE', JSON.stringify(payload), phone]
                     );
                     return;
                 }
+            }
+
+            if (session.state === 'AWAITING_REGIMEN') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const resp = text.trim();
+
+                if (resp === '1' || resp.toLowerCase() === 'contributivo') {
+                    payload.regimen = 'CONTRIBUTIVO';
+                } else if (resp === '2' || resp.toLowerCase() === 'subsidiado') {
+                    payload.regimen = 'SUBSIDIADO';
+                } else {
+                    await this.reply(msg, 'Por favor responde con 1 (Contributivo) o 2 (Subsidiado).');
+                    return;
+                }
+
+                const txt = `Entendido (${payload.regimen}). Por favor ingresa el *Número de Autorización* de tu servicio.\n\n_Si no lo tienes, será obligatorio presentarlo en ventanilla._`;
+                await this.reply(msg, txt);
+
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_AUTORIZACION', JSON.stringify(payload), phone]
+                );
+                return;
             }
 
             if (session.state === 'AWAITING_AUTORIZACION') {
@@ -306,23 +336,108 @@ const WhatsAppController = {
 
                 payload.autorizacion = authCode;
 
-                let txt = '¡Perfecto! ¿Para qué especialidad deseas agendar cita? Responde con el número:\n\n';
-                const specialties = await db.query('SELECT id, name FROM specialties WHERE is_active = TRUE');
-                let specRows = specialties.rows;
-                specRows.push({ id: 'catalog-eco', name: 'Ecografías' });
-                specRows.push({ id: 'catalog-rad', name: 'Radiografías' });
-                payload.specialties = specRows;
+                const services = await db.query('SELECT id, name FROM services WHERE is_active = TRUE ORDER BY name');
+                payload.services = services.rows;
 
-                specRows.forEach((s, idx) => {
+                let txt = '¡Perfecto! ¿Para qué *Servicio* deseas agendar cita? Responde con el número:\n\n';
+                services.rows.forEach((s, idx) => {
                     txt += `${idx + 1}. ${s.name}\n`;
                 });
 
                 await this.reply(msg, txt);
                 await db.query(
                     'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                    ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]
+                    ['AWAITING_SERVICE', JSON.stringify(payload), phone]
                 );
                 return;
+            }
+
+            if (session.state === 'AWAITING_SERVICE') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const index = parseInt(text) - 1;
+
+                if (isNaN(index) || index < 0 || index >= (payload.services || []).length) {
+                    await this.reply(msg, 'Por favor, responde con un número válido de la lista.');
+                    return;
+                }
+
+                const service = payload.services[index];
+                payload.service_id = service.id;
+                payload.service_name = service.name;
+
+                const normService = service.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+                if (normService.includes('medicina especializada') || normService.includes('general')) {
+                    const specialties = await db.query('SELECT id, name FROM specialties WHERE service_id = $1 AND is_active = TRUE', [service.id]);
+                    payload.specialties = specialties.rows;
+
+                    if (specialties.rows.length === 0) {
+                        await this.reply(msg, `Lo siento, no hay especialidades activas para ${service.name} en este momento.`);
+                        return;
+                    }
+
+                    if (specialties.rows.length === 1) {
+                        const spec = specialties.rows[0];
+                        payload.specialty_id = spec.id;
+                        payload.specialty_name = spec.name;
+                        let txt = `Elegiste ${service.name} (${spec.name}).\n\n¿Qué tipo de consulta es?\n1. Primera vez\n2. Control`;
+                        await this.reply(msg, txt);
+                        await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_CONSULTATION_TYPE', JSON.stringify(payload), phone]);
+                        return;
+                    }
+
+                    let txt = `Elegiste ${service.name}. ¿Para qué especialidad deseas agendar? Responde con el número:\n\n`;
+                    specialties.rows.forEach((s, idx) => {
+                        txt += `${idx + 1}. ${s.name}\n`;
+                    });
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]);
+                    return;
+
+                } else if (normService.includes('ecografia') || normService.includes('radiografia')) {
+                    const catalogKey = normService.includes('ecografia') ? 'Ecografias' : 'Radiografias';
+                    payload.catalog_type = catalogKey;
+
+                    let txt = `Has seleccionado ${service.name}.\n\nPor favor escribe el nombre del examen que necesitas (ej. "Obstétrica", "Tórax") o algunas palabras clave.`;
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_CATALOG_SEARCH', JSON.stringify(payload), phone]);
+                    return;
+
+                } else if (normService.includes('fisioterapia')) {
+                    let txt = `Elegiste ${service.name}.\n\n¿Qué tipo de atención necesitas?\n1. Consulta\n2. Terapia Física`;
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_FISIO_TYPE', JSON.stringify(payload), phone]);
+                    return;
+
+                } else if (normService.includes('odontologia')) {
+                    let txt = `Elegiste ${service.name}.\n\n¿Qué tipo de atención necesitas?\n1. Odontología General\n2. Ortodoncia`;
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_ODONTO_TYPE', JSON.stringify(payload), phone]);
+                    return;
+
+                } else if (normService.includes('enfermeria')) {
+                    let txt = `Elegiste ${service.name}.\n\n¿Qué tipo de atención necesitas?\n1. Consultas\n2. Procedimientos`;
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_ENFERM_TYPE', JSON.stringify(payload), phone]);
+                    return;
+
+                } else if (normService.includes('laboratorio')) {
+                    let txt = `*${service.name}*\n\n⚠️ Solo se pueden tomar exámenes de 7:00 AM a 9:00 AM. Algunos exámenes específicos solo se toman de 7:00 AM a 7:30 AM.\n\nPara agendar laboratorios, debes dirigirte a nuestra plataforma web, o bien, responder a este mensaje adjuntando una sola *imagen clara de tu orden médica*.\n\nUn asesor la revisará y se comunicará contigo hoy mismo. (Escribe *NO* si deseas cancelar).`;
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_LAB_PHOTO', JSON.stringify(payload), phone]);
+                    return;
+                } else {
+                    // Fallback
+                    const specialties = await db.query('SELECT id, name FROM specialties WHERE service_id = $1 AND is_active = TRUE', [service.id]);
+                    payload.specialties = specialties.rows;
+                    let txt = `Elegiste ${service.name}. ¿Para qué especialidad deseas agendar? Responde con el número:\n\n`;
+                    specialties.rows.forEach((s, idx) => {
+                        txt += `${idx + 1}. ${s.name}\n`;
+                    });
+                    await this.reply(msg, txt);
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_SPECIALTY', JSON.stringify(payload), phone]);
+                    return;
+                }
             }
 
             if (session.state === 'AWAITING_SPECIALTY') {
@@ -335,30 +450,8 @@ const WhatsAppController = {
                 }
 
                 const specialty = payload.specialties[index];
-
-                // --- NEW CATALOG CHECK ---
-                if (specialty.id === 'catalog-eco' || specialty.id === 'catalog-rad') {
-                    const catalogKey = specialty.id === 'catalog-eco' ? 'Ecografias' : 'Radiografias';
-                    payload.catalog_type = catalogKey;
-
-                    // Will use this later to fetch dates safely
-                    payload.specialty_name = specialty.name;
-
-                    let txt = `Has seleccionado ${specialty.name}.\n\n`;
-                    txt += `Por favor escribe el nombre del examen que necesitas (ej. "Obstétrica", "Tórax", "Rodilla") o algunas palabras clave.`;
-
-                    await this.reply(msg, txt);
-                    await db.query(
-                        'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                        ['AWAITING_CATALOG_SEARCH', JSON.stringify(payload), phone]
-                    );
-                    return;
-                }
-                const newPayload = {
-                    ...payload,
-                    specialty_id: specialty.id,
-                    specialty_name: specialty.name
-                };
+                payload.specialty_id = specialty.id;
+                payload.specialty_name = specialty.name;
 
                 let txt = `Elegiste ${specialty.name}.\n\nPara continuar, ¿Qué tipo de consulta es?\n1. Primera vez\n2. Control`;
 
@@ -366,7 +459,7 @@ const WhatsAppController = {
 
                 await db.query(
                     'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                    ['AWAITING_CONSULTATION_TYPE', JSON.stringify(newPayload), phone]
+                    ['AWAITING_CONSULTATION_TYPE', JSON.stringify(payload), phone]
                 );
                 return;
             }
@@ -453,47 +546,87 @@ const WhatsAppController = {
                 return;
             }
 
+            // Reusable function to fetch doctors and send to AWAITING_DOCTOR
+            const transitionToDoctorSelection = async (payloadObj, phoneNum, msgObj) => {
+                let q = `
+                    SELECT DISTINCT d.id, d.full_name 
+                    FROM doctors d
+                    JOIN doctor_specialties ds ON d.id = ds.doctor_id
+                    JOIN specialties s ON ds.specialty_id = s.id
+                    WHERE d.is_active = TRUE
+                `;
+                let params = [];
+                if (payloadObj.specialty_id) {
+                    q += ' AND s.id = $1';
+                    params.push(payloadObj.specialty_id);
+                } else if (payloadObj.service_id) {
+                    q += ' AND s.service_id = $1';
+                    params.push(payloadObj.service_id);
+                }
+
+                const docs = await db.query(q, params);
+                if (docs.rows.length === 0) {
+                    await this.reply(msgObj, 'Lo siento, no hay médicos asignados para este servicio en este momento. Escribe "HOLA" para empezar de nuevo.');
+                    await this.resetConversation(phoneNum);
+                    return;
+                }
+
+                payloadObj.doctors = docs.rows;
+                let textMsg = '¿Con qué profesional deseas agendar?\n\n';
+                docs.rows.forEach((doc, idx) => {
+                    textMsg += `${idx + 1}. Dr. ${doc.full_name}\n`;
+                });
+
+                await this.reply(msgObj, textMsg);
+                await db.query(
+                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
+                    ['AWAITING_DOCTOR', JSON.stringify(payloadObj), phoneNum]
+                );
+            };
+
+            if (session.state === 'AWAITING_LAB_PHOTO') {
+                const resp = text.toLowerCase().trim();
+                if (resp === 'no' || resp === 'n') {
+                    await this.reply(msg, `Entendido. Cita de laboratorio cancelada. ¿En qué más te puedo ayudar?`);
+                    await this.resetConversation(phone);
+                    return;
+                }
+
+                if (msg.hasMedia) {
+                    await this.reply(msg, `¡Fotografía recibida con éxito!\n\nUn asesor revisará tu orden y se pondrá en contacto contigo en breve para proceder con tu agendamiento de laboratorio.\n\n¡Gracias por preferir a la IPS Nuestra Señora de Fátima!`);
+                    await this.resetConversation(phone);
+                    return;
+                } else {
+                    await this.reply(msg, `Por favor, asegúrate de adjuntar una fotografía clara de tu orden médica usando el ícono de + , o escribe *NO* para cancelar el proceso.`);
+                    return;
+                }
+            }
+
             if (session.state === 'AWAITING_CATALOG_CONFIRM') {
                 const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
                 const resp = text.toLowerCase().trim();
 
                 if (resp === 'no' || resp === 'n') {
                     await this.reply(msg, `Entendido. Escribe el nombre del examen que buscas de nuevo, o escribe "HOLA" para reiniciar.`);
-                    await db.query(
-                        'UPDATE conversation_sessions SET state = $1 WHERE phone = $2',
-                        ['AWAITING_CATALOG_SEARCH', phone]
-                    );
+                    await db.query('UPDATE conversation_sessions SET state = $1 WHERE phone = $2', ['AWAITING_CATALOG_SEARCH', phone]);
                     return;
                 } else if (resp !== 'si' && resp !== 'sí' && resp !== 's') {
                     await this.reply(msg, `Por favor responde con *SI* o *NO* para confirmar.`);
                     return;
                 }
 
-                // Confirmed! Now find availability. As it's generic eco/rad we need to fallback query the DB specialty
-                const isEco = payload.catalog_type === 'Ecografias';
-                const likeQ = isEco ? '%Ecograf%' : 'Radio%'; // fallback
-                const specDb = await db.query('SELECT id FROM specialties WHERE name ILIKE $1 LIMIT 1', [likeQ]);
-
-                let actualSpecId = null;
-
-                if (specDb.rows.length > 0) {
-                    actualSpecId = specDb.rows[0].id;
+                if (payload.catalog_item && payload.catalog_item.recommendation) {
+                    await this.reply(msg, `Te hemos enviado las recomendaciones previas. Por favor, revísalas atentamente antes del examen.\n\n📋 *Recomendaciones:*\n${payload.catalog_item.recommendation}`);
                 }
 
-                const newPayload = {
-                    ...payload,
-                    specialty_id: actualSpecId,
-                    specialty_name: payload.catalog_item.name
-                };
+                const isEco = payload.catalog_type === 'Ecografias';
+                const specDb = await db.query('SELECT id FROM specialties WHERE name ILIKE $1 LIMIT 1', [isEco ? '%Ecograf%' : 'Radio%']);
 
-                let txt = `Excelente.\n\nPara continuar, ¿Qué tipo de consulta es?\n1. Primera vez\n2. Control`;
+                if (specDb.rows.length > 0) payload.specialty_id = specDb.rows[0].id;
+                payload.specialty_name = payload.catalog_item.name;
+                payload.consultation_type = 'EXAMEN';
 
-                await this.reply(msg, txt);
-
-                await db.query(
-                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                    ['AWAITING_CONSULTATION_TYPE', JSON.stringify(newPayload), phone]
-                );
+                await transitionToDoctorSelection(payload, phone, msg);
                 return;
             }
 
@@ -510,14 +643,82 @@ const WhatsAppController = {
                     return;
                 }
 
-                // Now find availability
-                const doctorId = await AvailabilityService.findDoctorForSpecialty(payload.specialty_id);
+                await transitionToDoctorSelection(payload, phone, msg);
+                return;
+            }
 
-                if (!doctorId) {
-                    await this.reply(msg, `Lo siento, no hay agenda habilitada para ${payload.specialty_name || 'este servicio'} en este momento. Escribe "HOLA" para empezar de nuevo.`);
-                    await this.resetConversation(phone);
+            // NEW BRANCH HANDLERS
+
+            if (session.state === 'AWAITING_FISIO_TYPE') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                if (text === '1') payload.consultation_type = 'Consulta';
+                else if (text === '2') payload.consultation_type = 'Terapia Fisica';
+                else { await this.reply(msg, 'Responde con 1 o 2.'); return; }
+
+                await transitionToDoctorSelection(payload, phone, msg);
+                return;
+            }
+
+            if (session.state === 'AWAITING_ODONTO_TYPE') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                if (text === '1') payload.specialty_name = 'Odontología General';
+                else if (text === '2') payload.specialty_name = 'Ortodoncia';
+                else { await this.reply(msg, 'Responde con 1 o 2.'); return; }
+
+                await transitionToDoctorSelection(payload, phone, msg);
+                return;
+            }
+
+            if (session.state === 'AWAITING_ENFERM_TYPE') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                if (text === '1') {
+                    await this.reply(msg, '¿Qué tipo de consulta?\n1. Primera vez\n2. Control\n3. Crecimiento y Desarrollo\n4. Planificación');
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_ENFERM_CONSULTA', JSON.stringify(payload), phone]);
+                } else if (text === '2') {
+                    await this.reply(msg, '¿Qué procedimiento necesitas?\n1. Citología (25-29 años)\n2. ADN VPH (30-65 años)\n3. Electrocardiograma\n4. Prueba de Esfuerzo\n5. Curaciones\n6. Toma de Tensión / Glucometría\n7. Ecocardiograma');
+                    await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_ENFERM_PROC', JSON.stringify(payload), phone]);
+                } else {
+                    await this.reply(msg, 'Responde con 1 o 2.');
+                }
+                return;
+            }
+
+            if (session.state === 'AWAITING_ENFERM_CONSULTA') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const types = ['Primera vez', 'Control', 'Crecimiento y Desarrollo', 'Planificacion'];
+                const idx = parseInt(text) - 1;
+                if (isNaN(idx) || idx < 0 || idx >= types.length) { await this.reply(msg, 'Responde del 1 al 4.'); return; }
+                payload.consultation_type = types[idx];
+                await transitionToDoctorSelection(payload, phone, msg);
+                return;
+            }
+
+            if (session.state === 'AWAITING_ENFERM_PROC') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const procs = ['Citología', 'ADN VPH', 'Electrocardiograma', 'Prueba de Esfuerzo', 'Curaciones', 'Toma de Tensión / Glucometría', 'Ecocardiograma'];
+                const idx = parseInt(text) - 1;
+                if (isNaN(idx) || idx < 0 || idx >= procs.length) { await this.reply(msg, 'Responde del 1 al 7.'); return; }
+
+                payload.consultation_type = 'PROCEDIMIENTO: ' + procs[idx];
+
+                if (idx === 0 || idx === 1) await this.reply(msg, '⚠️ No olvides prepararte: No tener relaciones sexuales, ni usar óvulos ni duchas vaginales 3 días antes de la toma. No ir en el periodo. Asistir en horas de la mañana.');
+                else if (idx === 2 || idx === 3 || idx === 6) await this.reply(msg, '⚠️ No olvides prepararte: Asistir con ropa cómoda y no consumir metoprolol o bloqueadores 24h previas al examen.');
+
+                await transitionToDoctorSelection(payload, phone, msg);
+                return;
+            }
+
+            if (session.state === 'AWAITING_DOCTOR') {
+                const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+                const index = parseInt(text) - 1;
+
+                if (isNaN(index) || index < 0 || index >= (payload.doctors || []).length) {
+                    await this.reply(msg, 'Por favor, responde con un número válido de la lista.');
                     return;
                 }
+
+                const doctorId = payload.doctors[index].id;
+                payload.doctor_id = doctorId;
 
                 const availableDates = [];
                 let checkDate = new Date();
@@ -533,12 +734,12 @@ const WhatsAppController = {
                 }
 
                 if (availableDates.length === 0) {
-                    await this.reply(msg, `Lo siento, no hay fechas próximas para ${payload.specialty_name || 'este servicio'}. Escribe "HOLA" para empezar de nuevo.`);
+                    await this.reply(msg, 'Lo siento, no hay fechas próximas para este médico o servicio. Escribe "HOLA" para reiniciar.');
                     await this.resetConversation(phone);
                     return;
                 }
 
-                let txt = `¿Qué fecha prefieres? Responde con el número:\n\n`;
+                let txt = '¿Qué fecha prefieres? Responde con el número:\n\n';
                 availableDates.forEach((d, idx) => {
                     const dStr = new Date(d + 'T00:00:00-05:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
                     txt += `${idx + 1}. ${dStr}\n`;
@@ -546,13 +747,9 @@ const WhatsAppController = {
 
                 await this.reply(msg, txt);
 
-                payload.doctor_id = doctorId;
                 payload.available_dates = availableDates;
 
-                await db.query(
-                    'UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3',
-                    ['AWAITING_DATE', JSON.stringify(payload), phone]
-                );
+                await db.query('UPDATE conversation_sessions SET state = $1, payload_json = $2 WHERE phone = $3', ['AWAITING_DATE', JSON.stringify(payload), phone]);
                 return;
             }
 
@@ -625,9 +822,6 @@ const WhatsAppController = {
                 const doctor = await db.query('SELECT full_name FROM doctors WHERE id = $1', [payload.doctor_id]);
                 const docName = doctor.rows[0]?.full_name || '';
 
-                const confirmMsg = `¡Todo listo para agendar!\n\n📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${payload.specialty_name}\n👨‍⚕️ Dr. ${docName}\n👤 Paciente: ${payload.patient_name} (${payload.patient_id_number})\n\n¿Deseas confirmar la cita? Responde *SI* para agendar o *NO* para cancelar.`;
-
-                // Prepare payload according to what CONFIRMING_BOOKING expects
                 const pendingBooking = {
                     specialty_id: payload.specialty_id,
                     doctorId: payload.doctor_id,
@@ -635,16 +829,49 @@ const WhatsAppController = {
                     time: payload.time,
                     patient_name: payload.patient_name,
                     patient_id: payload.patient_id_number,
+                    notes: JSON.stringify({ entidad: payload.entidad, regimen: payload.regimen, autorizacion: payload.autorizacion, consultation_type: payload.consultation_type }),
                     total_price: payload.catalog_item && payload.entidad === 'PARTICULAR' ? payload.catalog_item.price : null
                 };
 
-                await db.query(
-                    'UPDATE conversation_sessions SET payload_json = $1, state = $2 WHERE phone = $3',
-                    [JSON.stringify({ pending_booking: pendingBooking }), 'CONFIRMING_BOOKING', phone]
-                );
+                if (payload.regimen === 'SUBSIDIADO') {
+                    try {
+                        const appointment = await this.bookAppointment(phone, pendingBooking, pendingBooking.doctorId);
+                        let recommendation = payload.catalog_item?.recommendation || null;
 
-                await this.reply(msg, confirmMsg);
-                return;
+                        let confirmTxt = `¡Hola ${payload.patient_name}! Tu cita ha sido agendada con éxito.\n\n`;
+                        confirmTxt += `📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${payload.specialty_name}\n👨‍⚕️ Dr. ${docName}\n\n`;
+                        confirmTxt += `Al ser régimen Subsidiado, tu atención no tiene costo de cuota moderadora en ventanilla.\n\n¡Te esperamos! Recuerda llegar 15 minutos antes.`;
+
+                        await this.reply(msg, confirmTxt);
+                        if (recommendation) {
+                            await this.reply(msg, `📋 *Recomendaciones para tu examen:*\n${recommendation}`);
+                        }
+                        await this.resetConversation(phone);
+                        return;
+                    } catch (err) {
+                        console.error('Error auto-booking subsidiado:', err);
+                        await this.reply(msg, 'Ocurrió un error al guardar la cita. Por favor intenta más tarde o escribe *REINICIAR*.');
+                        await this.resetConversation(phone);
+                        return;
+                    }
+                } else {
+                    let confirmMsg = `¡Todo listo para agendar!\n\n📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${payload.specialty_name}\n👨‍⚕️ Dr. ${docName}\n👤 Paciente: ${payload.patient_name} (${payload.patient_id_number})\n\n`;
+
+                    if (payload.entidad === 'PARTICULAR') {
+                        let finalPrice = pendingBooking.total_price ? `$${pendingBooking.total_price}` : 'determinado según servicio';
+                        confirmMsg += `⚠️ *Atención Particular*: El costo de tu atención será ${finalPrice}. El pago debe realizarse en ventanilla el día de la cita.\n\n`;
+                    }
+
+                    confirmMsg += `¿Deseas confirmar la cita? Responde *SI* para agendar o *NO* para cancelar.`;
+
+                    await db.query(
+                        'UPDATE conversation_sessions SET payload_json = $1, state = $2 WHERE phone = $3',
+                        [JSON.stringify({ pending_booking: pendingBooking }), 'CONFIRMING_BOOKING', phone]
+                    );
+
+                    await this.reply(msg, confirmMsg);
+                    return;
+                }
             }
 
 
@@ -659,10 +886,10 @@ const WhatsAppController = {
         }
     },
 
-    // Handle cancellation request
     async handleCancellationRequest(client, msg, phone, aiResponse) {
         const res = await db.query(`
-            SELECT a.id, a.start_datetime, s.name as spec_name, d.full_name as doctor_name
+            SELECT a.id, a.start_datetime, s.name as spec_name, d.full_name as doctor_name,
+                   (a.start_datetime > CURRENT_TIMESTAMP + interval '3 hours') as can_cancel
             FROM appointments a
             JOIN patients p ON a.patient_id = p.id
             JOIN specialties s ON a.specialty_id = s.id
@@ -676,9 +903,16 @@ const WhatsAppController = {
             return;
         }
 
-        if (res.rows.length === 1) {
+        const cancelable = res.rows.filter(r => r.can_cancel);
+
+        if (cancelable.length === 0) {
+            await this.reply(msg, 'Tienes citas agendadas, pero no pueden ser canceladas por este medio. Recuerda que para poder cancelar una cita debes hacerlo con un mínimo de 3 horas de anticipación.');
+            return;
+        }
+
+        if (cancelable.length === 1) {
             // Only one appointment, ask for confirmation
-            const apt = res.rows[0];
+            const apt = cancelable[0];
             const dateStr = new Date(apt.start_datetime).toLocaleString('es-ES', {
                 weekday: 'long',
                 year: 'numeric',
@@ -689,7 +923,7 @@ const WhatsAppController = {
                 timeZone: 'America/Bogota'
             });
 
-            const confirmMsg = `Tienes 1 cita agendada:\n\n📅 ${dateStr}\n🏥 ${apt.spec_name}\n👨‍⚕️ Dr. ${apt.doctor_name}\n\n¿Deseas cancelarla? Responde *SI* para confirmar o *NO* para mantenerla.`;
+            const confirmMsg = `Tienes 1 cita agendada que puedes cancelar:\n\n📅 ${dateStr}\n🏥 ${apt.spec_name}\n👨‍⚕️ Dr. ${apt.doctor_name}\n\n¿Deseas cancelarla? Responde *SI* para confirmar o *NO* para mantenerla.`;
 
             // Store appointment ID in session
             await db.query(
@@ -700,8 +934,8 @@ const WhatsAppController = {
             await this.reply(msg, confirmMsg);
         } else {
             // Multiple appointments, let user choose
-            let listMsg = `Tienes ${res.rows.length} citas agendadas:\n\n`;
-            res.rows.forEach((apt, i) => {
+            let listMsg = `Tienes ${cancelable.length} cita(s) cancelable(s):\n\n`;
+            cancelable.forEach((apt, i) => {
                 const dateStr = new Date(apt.start_datetime).toLocaleString('es-ES', {
                     weekday: 'short',
                     month: 'short',
@@ -712,12 +946,12 @@ const WhatsAppController = {
                 });
                 listMsg += `${i + 1}. ${dateStr} - ${apt.spec_name} (Dr. ${apt.doctor_name})\n`;
             });
-            listMsg += `\n¿Cuál deseas cancelar? Responde con el número (1-${res.rows.length}) o escribe *NINGUNA* para no cancelar.`;
+            listMsg += `\n¿Cuál deseas cancelar? Responde con el número (1-${cancelable.length}) o escribe *NINGUNA* para no cancelar.`;
 
             // Store appointments in session
             await db.query(
                 'UPDATE conversation_sessions SET payload_json = $1, state = $2 WHERE phone = $3',
-                [JSON.stringify({ appointments_list: res.rows }), 'SELECTING_APPOINTMENT_TO_CANCEL', phone]
+                [JSON.stringify({ appointments_list: cancelable }), 'SELECTING_APPOINTMENT_TO_CANCEL', phone]
             );
 
             await this.reply(msg, listMsg);

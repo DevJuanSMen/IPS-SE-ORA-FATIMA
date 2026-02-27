@@ -105,14 +105,14 @@ module.exports = (client) => {
                             pName
                         ).catch(err => console.error('Failed to send confirmation:', err));
 
-                        // Delayed notification to doctor
-                        if (doctorPhone) {
+                        // Delayed notification to doctor (Check if enabled via env var and apply 15s delay)
+                        if (doctorPhone && process.env.ENABLE_DOCTOR_NOTIFICATIONS !== 'false') {
                             setTimeout(async () => {
                                 const dateStr = new Date(appointment.start_datetime).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
                                 const timeStr = new Date(appointment.start_datetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' });
                                 const docMessage = `🔔 *¡Nueva Cita Agendada!*\n\nHola Dr. ${doctorName}, tienes un nuevo paciente (agendado por administración):\n\n👤 Paciente: ${pName}\n📱 Teléfono: ${phone}\n📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${specialtyName || ''}`;
                                 await WhatsAppController.sendMessage(client, doctorPhone, docMessage);
-                            }, 5000); // 5 sec delay
+                            }, 15000); // 15 sec delay to avoid suspension
                         }
                     }
                 }

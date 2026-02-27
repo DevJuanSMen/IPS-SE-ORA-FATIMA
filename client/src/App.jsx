@@ -41,10 +41,15 @@ function App() {
     const [status, setStatus] = useState('disconnected'); // disconnected, connecting, qr, ready, error
     const [errorMsg, setErrorMsg] = useState('');
     const [activeTab, setActiveTab] = useState('dashboard');
+    const [showPoliciesModal, setShowPoliciesModal] = useState(false);
     const [specialties, setSpecialties] = useState([]);
     const [doctors, setDoctors] = useState([]);
     const [appointments, setAppointments] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [services, setServices] = useState([]);
+
+    // Admin Sub Tabs
+    const [activeAdminSubTab, setActiveAdminSubTab] = useState('services');
 
     // Modals
     const [showSpecialtyModal, setShowSpecialtyModal] = useState(false);
@@ -71,8 +76,10 @@ function App() {
         phone: '',
         full_name: '',
         document_id: '',
-        entidad: 'ENTIDAD',
+        entidad: '',
+        regimen: '',
         auth_number: '',
+        service_id: '',
         specialty_id: '',
         doctor_id: '',
         start_datetime: '',
@@ -174,6 +181,7 @@ function App() {
     }, []);
 
     const fetchAllData = () => {
+        fetchServices();
         fetchSpecialties();
         fetchDoctors();
         fetchAppointments();
@@ -190,7 +198,10 @@ function App() {
     };
 
     useEffect(() => {
-        if (activeTab === 'specialties') fetchSpecialties();
+        if (activeTab === 'specialties') {
+            fetchServices();
+            fetchSpecialties();
+        }
         if (activeTab === 'doctors') {
             fetchDoctors();
             fetchSpecialties();
@@ -213,6 +224,16 @@ function App() {
         }
         return () => clearInterval(interval);
     }, [activeTab, selectedChat]);
+
+    const fetchServices = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${API_URL}/api/services`, { headers: { Authorization: `Bearer ${token}` } });
+            setServices(res.data);
+        } catch (error) {
+            console.error('Error fetching services', error);
+        }
+    };
 
     const fetchSpecialties = async () => {
         setLoading(true);
@@ -343,6 +364,36 @@ function App() {
         }
     };
 
+    const handleSaveService = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = {
+            name: formData.get('name'),
+            is_active: true
+        };
+
+        try {
+            if (currentService) {
+                await axios.put(`${API_URL}/api/services/${currentService.id}`, data);
+            } else {
+                await axios.post(`${API_URL}/api/services`, data);
+            }
+            setShowServiceModal(false);
+            fetchServices();
+        } catch (err) {
+            alert('Error al guardar servicio: ' + err.message);
+        }
+    };
+
+    const handleToggleServiceStatus = async (service) => {
+        try {
+            await axios.put(`${API_URL}/api/services/${service.id}`, { ...service, is_active: !service.is_active });
+            fetchServices();
+        } catch (err) {
+            alert('Error al desactivar servicio: ' + err.message);
+        }
+    };
+
     const handleSaveSpecialty = async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
@@ -351,6 +402,7 @@ function App() {
             description: formData.get('description'),
             duration_minutes: parseInt(formData.get('duration_minutes')) || 30,
             capacity: parseInt(formData.get('capacity')) || 1,
+            service_id: formData.get('service_id') || null,
             is_active: true
         };
 
@@ -367,13 +419,12 @@ function App() {
         }
     };
 
-    const handleDeleteSpecialty = async (id) => {
-        if (!confirm('¿Estás seguro de desactivar esta especialidad?')) return;
+    const handleToggleSpecialtyStatus = async (specialty) => {
         try {
-            await axios.delete(`${API_URL}/api/specialties/${id}`);
+            await axios.put(`${API_URL}/api/specialties/${specialty.id}`, { ...specialty, is_active: !specialty.is_active });
             fetchSpecialties();
         } catch (err) {
-            alert('Error al eliminar: ' + err.message);
+            alert('Error al modificar estado: ' + err.message);
         }
     };
 
@@ -467,15 +518,7 @@ function App() {
         }
     };
 
-    const handleToggleSpecialtyStatus = async (specialty) => {
-        if (!confirm(`¿${specialty.is_active ? 'Desactivar' : 'Activar'} la especialidad ${specialty.name}?`)) return;
-        try {
-            await axios.put(`${API_URL}/api/specialties/${specialty.id}`, { ...specialty, is_active: !specialty.is_active });
-            fetchSpecialties();
-        } catch (err) {
-            alert('Error al cambiar estado: ' + err.message);
-        }
-    };
+
 
     const handlePatientLookup = async (phone) => {
         if (phone.length < 7) return;
@@ -557,7 +600,15 @@ function App() {
         if (bookingStep === 1) {
             setBookingStep(2);
         } else if (bookingStep === 2) {
-            if (bookingData.entidad === 'ENTIDAD') {
+            if (!bookingData.entidad) {
+                alert('Por favor seleccione una entidad o tipo de afiliación.');
+                return;
+            }
+            if (['ALIANZA SALUD', 'COMPENSAR'].includes(bookingData.entidad) && !bookingData.regimen) {
+                alert('Por favor seleccione su régimen.');
+                return;
+            }
+            if (['ALIANZA SALUD', 'COMPENSAR', 'MEDICINA PREPAGADA'].includes(bookingData.entidad)) {
                 if (!isValidAuthNumber(bookingData.auth_number)) {
                     alert('Por favor ingrese un número de autorización válido (no secuenciales ni repetidos simples).');
                     return;
@@ -615,13 +666,15 @@ function App() {
                 start_datetime: bookingData.start_datetime,
                 source: 'ADMIN', // Explicitly mark as Admin booking
                 total_price: bookingData.entidad === 'PARTICULAR' && bookingData.catalog_item ? bookingData.catalog_item.price : null,
-                notes: `Tipo de Consulta: ${bookingData.consultation_type}`
+                notes: JSON.stringify({ entidad: bookingData.entidad, regimen: bookingData.regimen, autorizacion: bookingData.auth_number, consultation_type: bookingData.consultation_type })
             });
 
             // 3. Show Success & Recommendations
             let successMsg = `Cita agendada con éxito.\nCódigo de Cita: ${apRes.data.confirmation_code}\n`;
 
-            if (bookingData.entidad === 'PARTICULAR' && bookingData.catalog_item) {
+            if (bookingData.regimen === 'SUBSIDIADO') {
+                successMsg += `\nAl ser régimen Subsidiado, el pago en ventanilla es $ 0 (Sin cobro).\n`;
+            } else if (bookingData.entidad === 'PARTICULAR' && bookingData.catalog_item) {
                 successMsg += `\nCosto Estimado: $${bookingData.catalog_item.price.toLocaleString('es-CO')} COP\n`;
             }
 
@@ -818,6 +871,23 @@ function App() {
 
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">TURNOS</div>
                     {/* Placeholder for future Turnos tab */}
+
+                    <div className="mt-8 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-t border-[#2C313C] pt-6">FAQ</div>
+                    <button onClick={() => setShowPoliciesModal(true)} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all text-slate-400 hover:bg-white/5 hover:text-white">
+                        <span className="font-medium text-sm flex items-center gap-3">
+                            <span className="w-4 h-4 rounded border border-current flex items-center justify-center text-[10px]">🏛️</span> Políticas IPS
+                        </span>
+                    </button>
+                    <a href="https://docs.google.com/forms/d/e/1FAIpQLSdMCtnGy3-rbXlPI3Z5P0rZiL9pvnJ6qUUZRYAD8yqVQocgdQ/viewform" target="_blank" rel="noopener noreferrer" className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all text-slate-400 hover:bg-white/5 hover:text-white">
+                        <span className="font-medium text-sm flex items-center gap-3">
+                            <AlertCircle size={18} /> Reportar un problema
+                        </span>
+                    </a>
+                    <a href="https://ipsnuestrasenoradefatima.com/contacto/" target="_blank" rel="noopener noreferrer" className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all text-slate-400 hover:bg-white/5 hover:text-white">
+                        <span className="font-medium text-sm flex items-center gap-3">
+                            <Mail size={18} /> Contáctanos
+                        </span>
+                    </a>
                 </nav>
 
                 <div className="mt-auto pt-4 border-t border-[#2C313C]">
@@ -848,7 +918,7 @@ function App() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <span className="text-blue-400 text-sm font-medium">Portal de Resultados</span>
+                        <a href="https://entregaderesultados.com/ipsnsf_lab/" target="_blank" rel="noopener noreferrer" className="text-blue-400 text-sm font-medium hover:text-blue-300 transition-colors">Portal de Resultados</a>
                         <span className="text-white font-medium text-sm">👋 Hola, {user.username || 'Admin'}</span>
                         <div className="w-10 h-10 bg-[#1F232B] rounded-full flex items-center justify-center border border-slate-700 shadow-lg cursor-pointer hover:bg-slate-700 transition">
                             <User className="text-slate-300 w-5 h-5" />
@@ -1490,57 +1560,167 @@ function App() {
                     {
                         activeTab === 'specialties' && (
                             <div className="space-y-6">
-                                <header className="flex justify-between items-center">
-                                    <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Especialidades</h2>
-                                    <button
-                                        onClick={() => { setCurrentSpecialty(null); setShowSpecialtyModal(true); }}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg"
-                                    >
-                                        <Plus size={20} /> Nueva Especialidad
-                                    </button>
-                                </header>
-
-                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xl">
-                                    <table className="w-full text-left">
-                                        <thead>
-                                            <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
-                                                <th className="px-6 py-4">Nombre</th>
-                                                <th className="px-6 py-4">Duración (min)</th>
-                                                <th className="px-6 py-4">Capacidad</th>
-                                                <th className="px-6 py-4">Descripción</th>
-                                                <th className="px-6 py-4">Acciones</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                            {specialties.map((s) => (
-                                                <tr key={s.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!s.is_active ? 'opacity-50' : ''}`}>
-                                                    <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{s.name} {s.is_active ? '' : '(Inactivo)'}</td>
-                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{s.duration_minutes}</td>
-                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
-                                                        <span className="bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 font-bold px-2 py-1 rounded">
-                                                            {s.capacity || 1}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{s.description || 'N/A'}</td>
-                                                    <td className="px-6 py-4 flex gap-4">
-                                                        <button onClick={() => { setCurrentSpecialty(s); setShowSpecialtyModal(true); }} className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300" title="Editar Especialidad"><Edit size={18} /></button>
-                                                        <button onClick={() => handleToggleSpecialtyStatus(s)} className={`${s.is_active ? 'text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300' : 'text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300'}`} title={s.is_active ? "Desactivar" : "Activar"}><Power size={18} /></button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                <div className="border-b border-slate-200 dark:border-slate-700">
+                                    <nav className="-mb-px flex space-x-8">
+                                        <button
+                                            onClick={() => setActiveAdminSubTab('services')}
+                                            className={`${activeAdminSubTab === 'services'
+                                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                                                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-lg`}
+                                        >
+                                            Servicios
+                                        </button>
+                                        <button
+                                            onClick={() => setActiveAdminSubTab('specialties')}
+                                            className={`${activeAdminSubTab === 'specialties'
+                                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                                                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-lg`}
+                                        >
+                                            Especialidades
+                                        </button>
+                                    </nav>
                                 </div>
+
+                                {/* Services Tab Content */}
+                                {activeAdminSubTab === 'services' && (
+                                    <>
+                                        <header className="flex justify-between items-center">
+                                            <div className="flex items-center gap-4 w-full max-w-md">
+                                                <div className="relative w-full">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Buscar servicios..."
+                                                        className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => { setCurrentService(null); setShowServiceModal(true); }}
+                                                className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg"
+                                            >
+                                                <Plus size={20} /> Nuevo Servicio
+                                            </button>
+                                        </header>
+
+                                        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xl">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+                                                        <th className="px-6 py-4">Nombre</th>
+                                                        <th className="px-6 py-4">Visible</th>
+                                                        <th className="px-6 py-4 text-right pr-6">Acciones</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                                    {services.map((s) => (
+                                                        <tr key={s.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!s.is_active ? 'opacity-50' : ''}`}>
+                                                            <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{s.name}</td>
+                                                            <td className="px-6 py-4">
+                                                                <span className={`px-3 py-1 rounded inline-flex items-center gap-1 text-xs border ${s.is_active ? 'border-green-500 text-green-500' : 'border-slate-400 text-slate-400'}`}>
+                                                                    <Check size={12} /> {s.is_active ? 'Sí' : 'No'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 flex gap-2 justify-end">
+                                                                <button onClick={() => { setCurrentService(s); setShowServiceModal(true); }} className="text-blue-500 hover:text-blue-600 border border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-1 rounded text-sm flex items-center gap-1 transition-colors"><Edit size={14} /> Editar</button>
+                                                                <button onClick={() => handleToggleServiceStatus(s)} className={`px-3 py-1 border rounded text-sm flex items-center gap-1 transition-colors ${s.is_active ? 'text-red-500 border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-green-500 border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`} title={s.is_active ? "Desactivar" : "Activar"}><Power size={14} /> {s.is_active ? "Desactivar" : "Activar"}</button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* Specialties Tab Content */}
+                                {activeAdminSubTab === 'specialties' && (
+                                    <>
+                                        <header className="flex justify-between items-center">
+                                            <div className="flex items-center gap-4 w-full max-w-md">
+                                                <div className="relative w-full">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Buscar especialidades..."
+                                                        className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-900 dark:text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => { setCurrentSpecialty(null); setShowSpecialtyModal(true); }}
+                                                className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg"
+                                            >
+                                                <Plus size={20} /> Nueva Especialidad
+                                            </button>
+                                        </header>
+
+                                        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xl">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+                                                        <th className="px-6 py-4">Nombre</th>
+                                                        <th className="px-6 py-4">Servicio Padre</th>
+                                                        <th className="px-6 py-4">Duración (min)</th>
+                                                        <th className="px-6 py-4">Capacidad</th>
+                                                        <th className="px-6 py-4 text-right pr-6">Acciones</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                                    {specialties.map((s) => (
+                                                        <tr key={s.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!s.is_active ? 'opacity-50' : ''}`}>
+                                                            <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{s.name}</td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{s.service_name || 'Sin Asignar'}</td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{s.duration_minutes}</td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                                                <span className="bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 font-bold px-2 py-1 rounded">
+                                                                    {s.capacity || 1}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 flex gap-2 justify-end">
+                                                                <button onClick={() => { setCurrentSpecialty(s); setShowSpecialtyModal(true); }} className="text-blue-500 hover:text-blue-600 border border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-1 rounded text-sm flex items-center gap-1 transition-colors"><Edit size={14} /> Editar</button>
+                                                                <button onClick={() => handleToggleSpecialtyStatus(s)} className={`px-3 py-1 border rounded text-sm flex items-center gap-1 transition-colors ${s.is_active ? 'text-red-500 border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-green-500 border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`} title={s.is_active ? "Desactivar" : "Activar"}><Power size={14} /> {s.is_active ? "Desactivar" : "Activar"}</button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         )
                     }
                 </div >
             </main >
 
+            {/* Service Modal */}
+            {
+                showServiceModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                        <form onSubmit={handleSaveService} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-md shadow-2xl space-y-6">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">{currentService ? 'Editar' : 'Nuevo'} Servicio</h3>
+                                <button type="button" onClick={() => setShowServiceModal(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Nombre del Servicio</label>
+                                    <input name="name" defaultValue={currentService?.name} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95">Guardar Servicio</button>
+                        </form>
+                    </div>
+                )
+            }
+
             {/* Specialty Modal */}
             {
                 showSpecialtyModal && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
                         <form onSubmit={handleSaveSpecialty} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-md shadow-2xl space-y-6">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-2xl font-bold text-slate-900 dark:text-white">{currentSpecialty ? 'Editar' : 'Nueva'} Especialidad</h3>
@@ -1548,8 +1728,15 @@ function App() {
                             </div>
                             <div className="space-y-4">
                                 <div className="flex flex-col gap-2">
-                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Nombre</label>
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Nombre de la Especialidad</label>
                                     <input name="name" defaultValue={currentSpecialty?.name} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Servicio al que pertenece (Padre)</label>
+                                    <select name="service_id" defaultValue={currentSpecialty?.service_id || ''} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white">
+                                        <option value="" disabled>Seleccionar Servicio</option>
+                                        {services.filter(s => s.is_active).map(srv => <option key={srv.id} value={srv.id}>{srv.name}</option>)}
+                                    </select>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="flex flex-col gap-2">
@@ -1557,12 +1744,12 @@ function App() {
                                         <input name="duration_minutes" type="number" defaultValue={currentSpecialty?.duration_minutes || 20} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
                                     </div>
                                     <div className="flex flex-col gap-2">
-                                        <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Capacidad (Pacientes por turno)</label>
+                                        <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Capacidad por turno</label>
                                         <input name="capacity" type="number" min="1" defaultValue={currentSpecialty?.capacity || 1} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
                                     </div>
                                 </div>
                                 <div className="flex flex-col gap-2">
-                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Descripción</label>
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Descripción (Opcional)</label>
                                     <textarea name="description" defaultValue={currentSpecialty?.description} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none h-24 text-slate-900 dark:text-white placeholder-slate-400" />
                                 </div>
                             </div>
@@ -1703,18 +1890,40 @@ function App() {
                                         <h4 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700 pb-2">Entidad y Cobertura</h4>
                                         <div className="flex flex-col gap-3">
                                             <div className="flex flex-col gap-2">
-                                                <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Tipo de Paciente</label>
+                                                <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Tipo de Paciente / Entidad</label>
                                                 <select
                                                     value={bookingData.entidad}
-                                                    onChange={(e) => setBookingData({ ...bookingData, entidad: e.target.value, auth_number: '' })}
+                                                    onChange={(e) => setBookingData({ ...bookingData, entidad: e.target.value, auth_number: '', regimen: '' })}
                                                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white"
                                                 >
-                                                    <option value="ENTIDAD">Afiliado a Entidad / EPS</option>
+                                                    <option value="">Seleccionar Entidad / Cobertura...</option>
                                                     <option value="PARTICULAR">Atención Particular (Pago en Sede)</option>
+                                                    <option value="ARL">ARL</option>
+                                                    <option value="SOAT">SOAT</option>
+                                                    <option value="ALIANZA SALUD">E.P.S Alianza Salud</option>
+                                                    <option value="COMPENSAR">E.P.S Compensar</option>
+                                                    <option value="MEDICINA PREPAGADA">Medicina Prepagada</option>
                                                 </select>
                                             </div>
-                                            {bookingData.entidad === 'ENTIDAD' && (
-                                                <div className="flex flex-col gap-2">
+
+                                            {['ALIANZA SALUD', 'COMPENSAR'].includes(bookingData.entidad) && (
+                                                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
+                                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Régimen</label>
+                                                    <select
+                                                        value={bookingData.regimen || ''}
+                                                        onChange={(e) => setBookingData({ ...bookingData, regimen: e.target.value })}
+                                                        required
+                                                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white"
+                                                    >
+                                                        <option value="">Seleccionar Régimen...</option>
+                                                        <option value="CONTRIBUTIVO">Contributivo</option>
+                                                        <option value="SUBSIDIADO">Subsidiado</option>
+                                                    </select>
+                                                </div>
+                                            )}
+
+                                            {['ALIANZA SALUD', 'COMPENSAR', 'MEDICINA PREPAGADA'].includes(bookingData.entidad) && (
+                                                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
                                                     <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Número de Autorización</label>
                                                     <input
                                                         value={bookingData.auth_number}
@@ -1723,6 +1932,15 @@ function App() {
                                                         placeholder="Ingrese el número impreso en la orden"
                                                         className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400 font-mono tracking-wide"
                                                     />
+                                                </div>
+                                            )}
+
+                                            {['ARL', 'SOAT'].includes(bookingData.entidad) && (
+                                                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 text-sm rounded-xl border border-amber-200 dark:border-amber-800 flex items-start gap-2 animate-in fade-in">
+                                                    <AlertCircle size={18} className="shrink-0 mt-0.5" />
+                                                    <p>
+                                                        <strong>Atención:</strong> El paciente debe presentar en ventanilla: Historia Clínica, Documento de Identidad, y Exámenes Autorizados / SOAT / ARL vigentes. De lo contrario no podrá tomar su cita.
+                                                    </p>
                                                 </div>
                                             )}
                                         </div>
@@ -1735,17 +1953,47 @@ function App() {
                                         <h4 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700 pb-2">Detalles de la Cita</h4>
                                         <div className="grid grid-cols-1 gap-4">
                                             <div className="flex flex-col gap-2">
-                                                <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Especialidad o Servicio</label>
+                                                <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Servicio</label>
                                                 <select
-                                                    value={bookingData.specialty_id}
-                                                    onChange={(e) => setBookingData({ ...bookingData, specialty_id: e.target.value, doctor_id: '', catalog_item: null })}
+                                                    value={bookingData.service_id}
+                                                    onChange={(e) => {
+                                                        const serviceId = e.target.value;
+                                                        // Find specialties for this service
+                                                        const serviceSpecialties = specialties.filter(s => s.service_id === serviceId && s.is_active);
+
+                                                        // Auto-select if there's only 1 specialty (or none, we just clear)
+                                                        const autoSpecId = serviceSpecialties.length === 1 ? serviceSpecialties[0].id : '';
+
+                                                        setBookingData({
+                                                            ...bookingData,
+                                                            service_id: serviceId,
+                                                            specialty_id: autoSpecId,
+                                                            doctor_id: '',
+                                                            catalog_item: null
+                                                        });
+                                                    }}
                                                     required
                                                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white"
                                                 >
-                                                    <option value="">Seleccionar...</option>
-                                                    {specialties.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                    <option value="">Seleccionar Servicio...</option>
+                                                    {services.filter(s => s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                                 </select>
                                             </div>
+
+                                            {bookingData.service_id && specialties.filter(s => s.service_id === bookingData.service_id && s.is_active).length > 1 && (
+                                                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
+                                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Especialidad</label>
+                                                    <select
+                                                        value={bookingData.specialty_id}
+                                                        onChange={(e) => setBookingData({ ...bookingData, specialty_id: e.target.value, doctor_id: '', catalog_item: null })}
+                                                        required
+                                                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white"
+                                                    >
+                                                        <option value="">Seleccionar Especialidad...</option>
+                                                        {specialties.filter(s => s.service_id === bookingData.service_id && s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                    </select>
+                                                </div>
+                                            )}
 
                                             <div className="flex flex-col gap-2">
                                                 <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Tipo de Consulta</label>
@@ -2313,6 +2561,95 @@ function App() {
                                         </div>
                                     </div>
                                 ))}
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Policies Modal */}
+            {
+                showPoliciesModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[80] animate-in fade-in duration-200">
+                        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-4xl shadow-2xl h-[85vh] flex flex-col">
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Política de privacidad y seguridad del portal</h3>
+                                <button type="button" onClick={() => setShowPoliciesModal(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors bg-slate-100 dark:bg-slate-700 rounded-full p-2"><X size={20} /></button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto pr-6 custom-scrollbar text-slate-700 dark:text-slate-300 space-y-6">
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">1. Introducción</h4>
+                                    <p className="text-sm leading-relaxed">
+                                        En la IPS Nuestra Señora de Fatima, la seguridad y la privacidad de la información personal de nuestros pacientes y usuarios son nuestra máxima prioridad. Esta política describe de forma detallada cómo recopilamos, utilizamos, almacenamos, protegemos y compartimos la información personal y financiera. Nos regimos por los más altos estándares internacionales de seguridad y privacidad, y nos comprometemos a cumplir con las normativas locales e internacionales, como el Reglamento General de Protección de Datos (GDPR), la Ley de Protección de Datos Personales y demás disposiciones aplicables.
+                                    </p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">2. Información que Recopilamos</h4>
+                                    <div className="space-y-3 pl-4">
+                                        <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200">2.1 Datos Personales</h5>
+                                        <p className="text-sm leading-relaxed">Recopilamos únicamente la información necesaria para la prestación de nuestros servicios de salud y para mejorar la experiencia de nuestros usuarios, incluyendo datos de identificación, información médicas y demográficas.</p>
+
+                                        <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200">2.2 Datos Financieros</h5>
+                                        <p className="text-sm leading-relaxed">Para procesar pagos y gestionar facturación, recopilamos información relacionada con medios de pago y el historial de transacciones.</p>
+
+                                        <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200">2.3 Datos Técnicos y de Navegación</h5>
+                                        <p className="text-sm leading-relaxed">Recopilamos datos técnicos como la dirección IP, tipo de navegador, sistema operativo y datos de cookies para optimizar la experiencia del usuario.</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">3. Uso de la Información</h4>
+                                    <p className="text-sm leading-relaxed">La información recopilada se utiliza para prestar y gestionar servicios médicos, procesar pagos, mejorar nuestros servicios, cumplir obligaciones legales y, en su caso, para fines de marketing con el consentimiento del usuario.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">4. Medidas de Seguridad</h4>
+                                    <p className="text-sm leading-relaxed">Implementamos medidas robustas de seguridad técnica, administrativa y física, que incluyen el cifrado de datos, controles de acceso, auditorías periódicas y capacitación constante del personal para garantizar la protección de la información.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">5. Procesamiento de Pagos</h4>
+                                    <p className="text-sm leading-relaxed">Los pagos se gestionan a través de proveedores certificados que cumplen con los estándares internacionales de seguridad, delegando el almacenamiento de datos sensibles y garantizando transacciones seguras.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">6. Consentimiento y Derechos de los Usuarios</h4>
+                                    <p className="text-sm leading-relaxed">Los usuarios tienen el derecho de acceder, rectificar, cancelar, oponerse y portar su información. Además, pueden retirar su consentimiento en cualquier momento sin afectar la legalidad de los tratamientos previos.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">7. Retención y Eliminación de Datos</h4>
+                                    <p className="text-sm leading-relaxed">Conservamos los datos personales durante el tiempo necesario para cumplir con los fines para los cuales fueron recopilados y para satisfacer obligaciones legales, procediendo a su eliminación o anonimización una vez que ya no sean necesarios.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">8. Transferencia Internacional de Datos</h4>
+                                    <p className="text-sm leading-relaxed">En algunos casos, los datos pueden ser transferidos y almacenados en el extranjero, siempre garantizando que se apliquen mecanismos de seguridad adecuados y se cumpla con la legislación aplicable.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">9. Cookies y Tecnologías Similares</h4>
+                                    <p className="text-sm leading-relaxed">Utilizamos cookies y tecnologías similares para mejorar la experiencia del usuario, analizar el uso del servicio y personalizar el contenido, ofreciendo al usuario la posibilidad de gestionar sus preferencias.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">10. Cambios en la Política</h4>
+                                    <p className="text-sm leading-relaxed">IPS Nuestra Señora de Fatima se reserva el derecho de modificar esta política en cualquier momento. Los cambios serán comunicados a los usuarios mediante los canales oficiales y se actualizará la fecha de la última revisión.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h4 className="font-bold text-lg text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2">11. Contacto y Recursos Adicionales</h4>
+                                    <p className="text-sm leading-relaxed mb-2">Para cualquier consulta o solicitud relacionada con la privacidad y la seguridad de sus datos, los usuarios pueden contactarnos a través de:</p>
+                                    <ul className="list-disc pl-6 text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                                        <li><strong>Teléfono:</strong> (601) 899 4189</li>
+                                        <li><strong>Celular:</strong> 320 826 4881</li>
+                                        <li><strong>Dirección:</strong> Calle 6 No 2-14 Anapoima, Cundinamarca</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div className="pt-6 border-t border-slate-200 dark:border-slate-700 mt-auto">
+                                <button type="button" onClick={() => setShowPoliciesModal(false)} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all active:scale-95 shadow-lg">Entendido, cerrar documento</button>
                             </div>
                         </div>
                     </div>

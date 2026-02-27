@@ -15,6 +15,14 @@ const createTables = async () => {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS services (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name VARCHAR(100) UNIQUE NOT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS specialties (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       name VARCHAR(100) NOT NULL,
@@ -128,6 +136,39 @@ const createTables = async () => {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='appointments' AND column_name='notes') THEN 
         ALTER TABLE appointments ADD COLUMN notes TEXT; 
       END IF;
+
+      -- 1. Add service_id to specialties if it doesnt exist
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='specialties' AND column_name='service_id') THEN 
+        ALTER TABLE specialties ADD COLUMN service_id UUID REFERENCES services(id);
+      END IF;
+
+    END $$;
+
+    -- Data Migration: Insert default services and link existing specialties
+    DO $$
+    DECLARE
+        v_medicina_especializada_id UUID;
+    BEGIN
+        -- Insert initial services if empty
+        INSERT INTO services (name) VALUES 
+            ('Laboratorio Clinico'),
+            ('Medicina Especializada'),
+            ('Ecografia'),
+            ('Radiografias'),
+            ('Fisioterapia'),
+            ('Odontologia'),
+            ('Enfermeria'),
+            ('Medicina General')
+        ON CONFLICT (name) DO NOTHING;
+
+        -- Get ID for 'Medicina Especializada'
+        SELECT id INTO v_medicina_especializada_id FROM services WHERE name = 'Medicina Especializada' LIMIT 1;
+
+        -- Assign all current specialties to 'Medicina Especializada' if they have no service_id yet
+        IF v_medicina_especializada_id IS NOT NULL THEN
+            UPDATE specialties SET service_id = v_medicina_especializada_id WHERE service_id IS NULL;
+        END IF;
+
     END $$;
   `;
 

@@ -195,6 +195,7 @@ app.use('/api/auth', require('./modules/auth/authRoutes'));
 
 const authMiddleware = require('./middleware/authMiddleware');
 
+app.use('/api/services', authMiddleware(), require('./modules/services/serviceRoutes'));
 app.use('/api/specialties', authMiddleware(), require('./modules/specialties/specialtyRoutes'));
 app.use('/api/doctors', authMiddleware(), require('./modules/doctors/doctorRoutes'));
 
