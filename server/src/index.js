@@ -204,6 +204,7 @@ app.use('/api/appointments', authMiddleware(), require('./modules/appointments/a
 
 app.use('/api/chats', authMiddleware(), require('./modules/chat/chatRoutes')(client));
 app.use('/api/patients', authMiddleware(), require('./modules/patients/patientRoutes'));
+app.use('/api/reports', authMiddleware(), require('./modules/reports/reportsRoutes'));
 
 app.get('/api/catalog', authMiddleware(), (req, res) => {
   try {

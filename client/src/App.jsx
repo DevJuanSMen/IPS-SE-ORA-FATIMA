@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
@@ -29,8 +29,21 @@ import {
     Sun,
     User,
     Clock,
-    Mail
+    Mail,
+    BarChart2,
+    TrendingUp,
+    FileText,
+    Download,
+    Activity,
+    Filter
 } from 'lucide-react';
+import {
+    BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+    XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import axios from 'axios';
 import LogoImage from '../assets/Diseño sin título (9).png';
 
@@ -93,7 +106,24 @@ function App() {
 
     const [catalogs, setCatalogs] = useState({ Ecografias: [], Radiografias: [] });
 
-    // Availability State
+    // Reports State
+    const [reportSummary, setReportSummary] = useState(null);
+    const [reportBySpecialty, setReportBySpecialty] = useState([]);
+    const [reportByDoctor, setReportByDoctor] = useState([]);
+    const [reportByService, setReportByService] = useState([]);
+    const [reportByEntity, setReportByEntity] = useState([]);
+    const [reportTrends, setReportTrends] = useState([]);
+    const [reportLoading, setReportLoading] = useState(false);
+    const reportTodayStr = new Date().toISOString().split('T')[0];
+    const reportThirtyAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const [reportFrom, setReportFrom] = useState(reportThirtyAgo);
+    const [reportTo, setReportTo] = useState(reportTodayStr);
+    const specChartRef = useRef(null);
+    const trendsChartRef = useRef(null);
+    const entityChartRef = useRef(null);
+    const PIE_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#34d399', '#f87171', '#a78bfa', '#fb923c'];
+
+
     const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
     const [availableSlots, setAvailableSlots] = useState([]);
     const [availabilityDate, setAvailabilityDate] = useState(new Date().toISOString().split('T')[0]);
@@ -199,6 +229,55 @@ function App() {
             console.error('Error fetching catalogs:', err);
         }
     };
+
+    const fetchReports = async (from = reportFrom, to = reportTo) => {
+        setReportLoading(true);
+        try {
+            const params = { params: { from, to } };
+            const [summary, bySpec, byDoc, byServ, byEnt, trends] = await Promise.all([
+                axios.get(`${API_URL}/api/reports/summary`, params),
+                axios.get(`${API_URL}/api/reports/by-specialty`, params),
+                axios.get(`${API_URL}/api/reports/by-doctor`, params),
+                axios.get(`${API_URL}/api/reports/by-service`, params),
+                axios.get(`${API_URL}/api/reports/by-entity`, params),
+                axios.get(`${API_URL}/api/reports/trends`)
+            ]);
+            setReportSummary(summary.data);
+            setReportBySpecialty(bySpec.data);
+            setReportByDoctor(byDoc.data);
+            setReportByService(byServ.data);
+            setReportByEntity(byEnt.data);
+            setReportTrends(trends.data);
+        } catch (err) {
+            console.error('Error fetching reports:', err);
+        }
+        setReportLoading(false);
+    };
+
+    useEffect(() => {
+        if (activeTab === 'reports') fetchReports();
+    }, [activeTab]);
+
+    const exportToExcel = (data, filename) => {
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Reporte');
+        XLSX.writeFile(wb, `${filename}.xlsx`);
+    };
+
+    const exportChartToPDF = async (ref, title) => {
+        if (!ref?.current) return;
+        const canvas = await html2canvas(ref.current, { scale: 2, backgroundColor: '#fff' });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+        const pdfW = pdf.internal.pageSize.getWidth();
+        const pdfH = (canvas.height * pdfW) / canvas.width;
+        pdf.text(title, 20, 30);
+        pdf.addImage(imgData, 'PNG', 0, 45, pdfW, pdfH);
+        pdf.save(`${title}.pdf`);
+    };
+
+
 
     useEffect(() => {
         if (activeTab === 'specialties') {
@@ -797,8 +876,8 @@ function App() {
         <button
             onClick={() => setActiveTab(id)}
             className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all ${activeTab === id
-                ? 'bg-[#2B3654] text-white shadow-md'
-                : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                ? 'bg-blue-600 dark:bg-[#2B3654] text-white shadow-md'
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-white'
                 }`}
         >
             <Icon size={18} />
@@ -845,9 +924,9 @@ function App() {
     );
 
     return (
-        <div className="flex min-h-screen bg-[#111C44] text-slate-100 transition-colors duration-300">
+        <div className="flex min-h-screen bg-slate-100 dark:bg-[#111C44] text-slate-800 dark:text-slate-100 transition-colors duration-300">
             {/* Sidebar */}
-            <aside className="w-64 bg-[#1F232B] border-r border-[#2C313C] py-6 px-4 flex flex-col transition-colors duration-300 sticky top-0 h-screen z-50">
+            <aside className="w-64 bg-white dark:bg-[#1F232B] border-r border-slate-200 dark:border-[#2C313C] py-6 px-4 flex flex-col transition-colors duration-300 sticky top-0 h-screen z-50">
                 <div className="flex items-center justify-center mb-8">
                     <img src={LogoImage} alt="IPS Nuestra Señora de Fátima Logo" className="h-28 w-auto object-contain" />
                 </div>
@@ -869,10 +948,11 @@ function App() {
                         )}
                     </div>
 
-                    <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">SERVICIOS MÉDICOS</div>
+                    <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">SERVICIOS MÉDICOS</div>
                     <SidebarItem id="specialties" icon={LayoutDashboard} label="Gestión de Servicios" />
+                    <SidebarItem id="reports" icon={BarChart2} label="Reportes" />
 
-                    <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">TURNOS</div>
+                    <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">TURNOS</div>
                     {/* Placeholder for future Turnos tab */}
 
                     <div className="mt-8 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-t border-[#2C313C] pt-6">FAQ</div>
@@ -896,7 +976,7 @@ function App() {
                 <div className="mt-auto pt-4 border-t border-[#2C313C]">
                     <button
                         onClick={toggleTheme}
-                        className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl transition-all text-slate-400 hover:bg-white/5 hover:text-white"
+                        className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl transition-all text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-white"
                     >
                         <span className="font-medium text-sm">{theme === 'dark' ? 'Modo Claro' : 'Modo Oscuro'}</span>
                         {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
@@ -912,18 +992,18 @@ function App() {
             </aside>
 
             {/* Main Content */}
-            <main className="flex-1 flex flex-col h-screen overflow-hidden bg-[#0B1437]">
-                <header className="flex justify-between items-center px-8 py-5 border-b border-indigo-900/30 bg-[#0B1437]/80 backdrop-blur-sm z-40">
+            <main className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50 dark:bg-[#0B1437] transition-colors">
+                <header className="flex justify-between items-center px-8 py-5 border-b border-slate-200 dark:border-indigo-900/30 bg-white dark:bg-[#0B1437]/80 backdrop-blur-sm z-40">
                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                        <span className="hover:text-blue-400 cursor-pointer">Home</span>
-                        <span>/</span>
-                        <span className="text-white font-bold capitalize">{activeTab}</span>
+                        <span className="hover:text-blue-500 dark:hover:text-blue-400 cursor-pointer text-slate-500 dark:text-slate-400">Home</span>
+                        <span className="text-slate-400 dark:text-slate-500">/</span>
+                        <span className="text-slate-800 dark:text-white font-bold capitalize">{activeTab}</span>
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <a href="https://entregaderesultados.com/ipsnsf_lab/" target="_blank" rel="noopener noreferrer" className="text-blue-400 text-sm font-medium hover:text-blue-300 transition-colors">Portal de Resultados</a>
-                        <span className="text-white font-medium text-sm">👋 Hola, {user.username || 'Admin'}</span>
-                        <div className="w-10 h-10 bg-[#1F232B] rounded-full flex items-center justify-center border border-slate-700 shadow-lg cursor-pointer hover:bg-slate-700 transition">
+                        <a href="https://entregaderesultados.com/ipsnsf_lab/" target="_blank" rel="noopener noreferrer" className="text-blue-500 dark:text-blue-400 text-sm font-medium hover:text-blue-600 dark:hover:text-blue-300 transition-colors">Portal de Resultados</a>
+                        <span className="text-slate-700 dark:text-white font-medium text-sm">👋 Hola, {user.username || 'Admin'}</span>
+                        <div className="w-10 h-10 bg-slate-100 dark:bg-[#1F232B] rounded-full flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-lg cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition">
                             <User className="text-slate-300 w-5 h-5" />
                         </div>
                     </div>
@@ -1696,8 +1776,191 @@ function App() {
                             </div>
                         )
                     }
+
+                    {/* ============ REPORTS TAB ============ */}
+                    {activeTab === 'reports' && (
+                        <div className="space-y-8 animate-in fade-in duration-500 max-w-7xl mx-auto">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                <div>
+                                    <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white flex items-center gap-3">
+                                        <BarChart2 className="text-indigo-500" size={32} /> Reportes & Analítica
+                                    </h2>
+                                    <p className="text-slate-500 dark:text-slate-400 mt-1">Métricas consolidadas de actividad de la IPS.</p>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2">
+                                        <Filter size={14} className="text-slate-400" />
+                                        <input type="date" value={reportFrom} onChange={e => setReportFrom(e.target.value)} className="text-sm bg-transparent outline-none text-slate-700 dark:text-white" />
+                                        <span className="text-slate-400 text-sm">→</span>
+                                        <input type="date" value={reportTo} onChange={e => setReportTo(e.target.value)} className="text-sm bg-transparent outline-none text-slate-700 dark:text-white" />
+                                    </div>
+                                    <button onClick={() => fetchReports(reportFrom, reportTo)} disabled={reportLoading} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 shadow-lg disabled:opacity-50">
+                                        {reportLoading ? <RefreshCw size={14} className="animate-spin" /> : <Activity size={14} />}
+                                        {reportLoading ? 'Calculando...' : 'Actualizar'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* KPI Summary Cards */}
+                            {reportSummary && (
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                    {[
+                                        { label: 'Citas en el período', value: reportSummary.totalCitas, icon: Calendar, color: 'indigo' },
+                                        { label: 'Citas Hoy', value: reportSummary.citasHoy, icon: Activity, color: 'green' },
+                                        { label: 'Pacientes únicos', value: reportSummary.pacientesUnicos, icon: Users, color: 'blue' },
+                                        { label: 'Tasa de cancelación', value: `${reportSummary.cancelRate}%`, icon: TrendingUp, color: 'red' },
+                                    ].map(({ label, value, icon: Icon, color }) => (
+                                        <div key={label} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-100 dark:border-slate-700 shadow-sm flex items-center gap-4">
+                                            <div className={`w-12 h-12 rounded-xl bg-${color}-100 dark:bg-${color}-500/20 flex items-center justify-center shrink-0`}>
+                                                <Icon className={`text-${color}-500`} size={22} />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-extrabold text-slate-900 dark:text-white">{value}</p>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{label}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Charts Row */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Top Especialidades Bar Chart */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><BarChart2 size={18} className="text-indigo-500" /> Citas por Especialidad</h3>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => exportToExcel(reportBySpecialty.map(r => ({ Especialidad: r.name, Total: r.total, Agendadas: r.agendadas, Canceladas: r.canceladas, Atendidas: r.atendidas })), 'reporte_especialidades')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                                <Download size={12} /> Excel
+                                            </button>
+                                            <button onClick={() => exportChartToPDF(specChartRef, 'Citas por Especialidad')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                                <FileText size={12} /> PDF
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div ref={specChartRef}>
+                                        <ResponsiveContainer width="100%" height={260}>
+                                            <BarChart data={reportBySpecialty.slice(0, 8)} margin={{ top: 5, right: 5, left: -20, bottom: 60 }}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} angle={-30} textAnchor="end" />
+                                                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
+                                                <Bar dataKey="total" fill="#6366f1" radius={[6, 6, 0, 0]} name="Total" />
+                                                <Bar dataKey="canceladas" fill="#f87171" radius={[6, 6, 0, 0]} name="Canceladas" />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* Trends Line Chart */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><TrendingUp size={18} className="text-green-500" /> Tendencia Semanal</h3>
+                                        <button onClick={() => exportChartToPDF(trendsChartRef, 'Tendencia Semanal de Citas')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                            <FileText size={12} /> PDF
+                                        </button>
+                                    </div>
+                                    <div ref={trendsChartRef}>
+                                        <ResponsiveContainer width="100%" height={260}>
+                                            <LineChart data={reportTrends} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                                <XAxis dataKey="semana" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
+                                                <Legend />
+                                                <Line type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 4 }} name="Total" />
+                                                <Line type="monotone" dataKey="atendidas" stroke="#22d3ee" strokeWidth={2} dot={{ r: 3 }} name="Atendidas" />
+                                                <Line type="monotone" dataKey="canceladas" stroke="#f87171" strokeWidth={2} dot={{ r: 3 }} name="Canceladas" />
+                                            </LineChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Pie + Services Row */}
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                {/* Entity Pie Chart */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6 lg:col-span-1">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2"><Building2 size={16} className="text-amber-500" /> Por Entidad</h3>
+                                        <button onClick={() => exportChartToPDF(entityChartRef, 'Distribucion por Entidad')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded-lg flex items-center gap-1 font-medium transition-all">
+                                            <FileText size={11} /> PDF
+                                        </button>
+                                    </div>
+                                    <div ref={entityChartRef}>
+                                        {reportByEntity.length > 0 ? (
+                                            <ResponsiveContainer width="100%" height={220}>
+                                                <PieChart>
+                                                    <Pie data={reportByEntity} dataKey="total" nameKey="entidad" cx="50%" cy="50%" outerRadius={80} label={({ entidad, percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                                                        {reportByEntity.map((_, idx) => <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />)}
+                                                    </Pie>
+                                                    <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} formatter={(v, n) => [v, n]} />
+                                                    <Legend formatter={(v) => <span className="text-xs text-slate-600 dark:text-slate-300">{v}</span>} />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        ) : (<div className="h-[220px] flex items-center justify-center text-slate-400 text-sm italic">Sin datos de entidades aún.</div>)}
+                                    </div>
+                                </div>
+
+                                {/* Services Bar */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6 lg:col-span-2">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Stethoscope size={18} className="text-cyan-500" /> Citas por Servicio</h3>
+                                        <button onClick={() => exportToExcel(reportByService.map(r => ({ Servicio: r.name, Total: r.total })), 'reporte_servicios')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                            <Download size={12} /> Excel
+                                        </button>
+                                    </div>
+                                    <ResponsiveContainer width="100%" height={220}>
+                                        <BarChart data={reportByService} layout="vertical" margin={{ top: 0, right: 10, left: 60, bottom: 0 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                                            <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} width={90} />
+                                            <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
+                                            <Bar dataKey="total" fill="#22d3ee" radius={[0, 6, 6, 0]} name="Total" />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* Doctors Table */}
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Users size={18} className="text-violet-500" /> Médicos más Solicitados</h3>
+                                    <button onClick={() => exportToExcel(reportByDoctor.map(r => ({ Medico: r.name, Especialidad: r.especialidad, Total: r.total, Canceladas: r.canceladas, Atendidas: r.atendidas })), 'reporte_medicos')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                        <Download size={12} /> Exportar Excel
+                                    </button>
+                                </div>
+                                <div className="overflow-auto rounded-xl border border-slate-100 dark:border-slate-700">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 dark:bg-slate-900/60">
+                                            <tr>
+                                                {['Médico', 'Especialidad', 'Total', 'Atendidas', 'Canceladas'].map(h => (
+                                                    <th key={h} className="text-left px-4 py-3 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">{h}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                                            {reportByDoctor.length === 0 ? (
+                                                <tr><td colSpan={5} className="text-center py-8 text-slate-400 italic">Sin citas en este período.</td></tr>
+                                            ) : reportByDoctor.map((d, i) => (
+                                                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                                                    <td className="px-4 py-3 font-semibold text-slate-800 dark:text-white">Dr. {d.name}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{d.especialidad || '—'}</td>
+                                                    <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.total}</span></td>
+                                                    <td className="px-4 py-3"><span className="bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.atendidas}</span></td>
+                                                    <td className="px-4 py-3"><span className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.canceladas}</span></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                 </div >
             </main >
+
 
             {/* Service Modal */}
             {
