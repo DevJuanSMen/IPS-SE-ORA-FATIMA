@@ -28,7 +28,8 @@ import {
     Moon,
     Sun,
     User,
-    Clock
+    Clock,
+    Mail
 } from 'lucide-react';
 import axios from 'axios';
 import LogoImage from '../assets/Diseño sin título (9).png';
