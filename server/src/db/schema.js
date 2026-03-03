@@ -1,4 +1,4 @@
-const db = require('./index');
+const pool = require('./index');
 
 const createTables = async () => {
   const queryText = `
@@ -137,12 +137,65 @@ const createTables = async () => {
         ALTER TABLE appointments ADD COLUMN notes TEXT; 
       END IF;
 
-      -- 1. Add service_id to specialties if it doesnt exist
+      -- Add service_id to specialties if it doesnt exist
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='specialties' AND column_name='service_id') THEN 
         ALTER TABLE specialties ADD COLUMN service_id UUID REFERENCES services(id);
       END IF;
 
+      -- Add profile fields to users
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='email') THEN
+        ALTER TABLE users ADD COLUMN email VARCHAR(255);
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='full_name') THEN
+        ALTER TABLE users ADD COLUMN full_name VARCHAR(255);
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='avatar_url') THEN
+        ALTER TABLE users ADD COLUMN avatar_url TEXT; -- stores base64 encoded image
+      END IF;
+
     END $$;
+
+    -- New tables for multi-role features
+    CREATE TABLE IF NOT EXISTS patient_results (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+      file_name VARCHAR(255) NOT NULL,
+      file_data TEXT NOT NULL, -- base64 encoded image data
+      mime_type VARCHAR(50) DEFAULT 'image/jpeg',
+      uploaded_by UUID REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS chatbot_faqs (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS patient_messages (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+      patient_name VARCHAR(255),
+      message TEXT NOT NULL,
+      reply TEXT,
+      status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, REPLIED
+      replied_by UUID REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      replied_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key VARCHAR(100) PRIMARY KEY,
+      value TEXT,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Initialize default settings
+    INSERT INTO settings (key, value) VALUES ('is_bot_enabled', 'true') ON CONFLICT (key) DO NOTHING;
+
 
     -- Data Migration: Insert default services and link existing specialties
     DO $$
@@ -171,17 +224,18 @@ const createTables = async () => {
 
     END $$;
   `;
-
   try {
-    await db.query(queryText);
+    await pool.query(queryText);
     console.log('Database tables created successfully');
   } catch (err) {
     console.error('Error creating database tables', err);
   }
 };
 
+
 if (require.main === module) {
   createTables().then(() => process.exit());
 }
 
 module.exports = createTables;
+

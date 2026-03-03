@@ -18,6 +18,7 @@ try {
 }
 
 let socketIo = null;
+const testPhones = new Set(); // Stores phones that can talk to Fátima even if globally disabled
 
 const WhatsAppController = {
     setSocket(io) {
@@ -103,17 +104,31 @@ const WhatsAppController = {
         await this.sendMessage(client, phone, message);
     },
 
-    // Get or create session
     async getOrCreateSession(phone) {
-        let res = await db.query('SELECT * FROM conversation_sessions WHERE phone = $1', [phone]);
-        if (res.rows.length === 0) {
-            await db.query(
-                'INSERT INTO conversation_sessions (phone, state, is_bot_active) VALUES ($1, $2, $3)',
-                [phone, 'ACTIVE', true]
-            );
-            res = await db.query('SELECT * FROM conversation_sessions WHERE phone = $1', [phone]);
+        try {
+            let res = await db.query('SELECT * FROM conversation_sessions WHERE phone = $1', [phone]);
+            if (res.rows.length === 0) {
+                try {
+                    await db.query(
+                        'INSERT INTO conversation_sessions (phone, state, is_bot_active) VALUES ($1, $2, $3)',
+                        [phone, 'ACTIVE', true]
+                    );
+                } catch (insertErr) {
+                    if (insertErr.code === '23505') {
+                        // Unique violation - row was likely inserted between our SELECT and INSERT
+                        res = await db.query('SELECT * FROM conversation_sessions WHERE phone = $1', [phone]);
+                    } else {
+                        throw insertErr;
+                    }
+                }
+                res = await db.query('SELECT * FROM conversation_sessions WHERE phone = $1', [phone]);
+            }
+            return res.rows[0];
+        } catch (err) {
+            console.error('Bot Error in getOrCreateSession:', err);
+            // Fallback: return a basic session object to avoid crashing
+            return { phone, state: 'ACTIVE', is_bot_active: true };
         }
-        return res.rows[0];
     },
 
     // Set bot status
@@ -134,10 +149,29 @@ const WhatsAppController = {
     },
 
     // Main message handler
-    async handleMessage(client, msg) {
+    async handleMessage(client, msg, isBotEnabledGlobal = true) {
         const phone = msg.from.split('@')[0]; // Clean @c.us or @lid
         const text = msg.body.trim();
         console.log(`[AI-BOT] Received from ${msg.from} (clean: ${phone}): "${text}"`);
+
+        // Test mode commands
+        if (text.toLowerCase() === 'activar modo pruebas') {
+            testPhones.add(phone);
+            await this.reply(msg, '🛠️ Fátima te ha añadido a la lista de pruebas. Responderé tus mensajes aunque el bot esté apagado globalmente.');
+            return;
+        }
+
+        if (text.toLowerCase() === 'desactivar modo pruebas') {
+            testPhones.delete(phone);
+            await this.reply(msg, '🛑 Has sido removido de la lista de pruebas. Ya no recibirás respuestas si el bot global está desactivado.');
+            return;
+        }
+
+        // If the bot is disabled globally and the user is not in the test list, ignore the message completely
+        if (!isBotEnabledGlobal && !testPhones.has(phone)) {
+            console.log(`[BOT-DEBUG] Bot is globally off. Phone ${phone} is NOT in testPhones. Ignoring.`);
+            return;
+        }
 
         try {
             // Check if sender is a doctor
@@ -593,11 +627,44 @@ const WhatsAppController = {
                 }
 
                 if (msg.hasMedia) {
-                    await this.reply(msg, `¡Fotografía recibida con éxito!\n\nUn asesor revisará tu orden y se pondrá en contacto contigo en breve para proceder con tu agendamiento de laboratorio.\n\n¡Gracias por preferir a la IPS Nuestra Señora de Fátima!`);
+                    try {
+                        const media = await msg.downloadMedia();
+
+                        // Find or create patient
+                        let patient = await db.query('SELECT id FROM patients WHERE phone = $1', [phone]);
+                        let patientId;
+
+                        if (patient.rows.length === 0) {
+                            const newPatient = await db.query(
+                                'INSERT INTO patients (phone, full_name, document_id) VALUES ($1, $2, $3) RETURNING id',
+                                [phone, 'Paciente WhatsApp', null]
+                            );
+                            patientId = newPatient.rows[0].id;
+                        } else {
+                            patientId = patient.rows[0].id;
+                        }
+
+                        // Generate a generic filename
+                        const extension = media.mimetype.split('/')[1] || 'jpeg';
+                        const fileName = `Orden_Laboratorio_WP_${Date.now()}.${extension}`;
+
+                        // Save image base64 data to patient_results table
+                        const base64Data = `data:${media.mimetype};base64,${media.data}`;
+
+                        await db.query(
+                            'INSERT INTO patient_results (patient_id, file_name, file_data, mime_type, uploaded_by) VALUES ($1, $2, $3, $4, NULL)',
+                            [patientId, fileName, base64Data, media.mimetype]
+                        );
+
+                        await this.reply(msg, `¡Fotografía recibida y guardada con éxito!\n\nUn asesor de laboratorio revisará tu orden y se pondrá en contacto contigo en breve para proceder con tu agendamiento de laboratorio.\n\n¡Gracias por preferir a la IPS Nuestra Señora de Fátima!`);
+                    } catch (err) {
+                        console.error('Error saving lab photo from WhatsApp:', err);
+                        await this.reply(msg, 'Hubo un error al guardar tu fotografía. Por favor, intenta enviarla de nuevo.');
+                    }
                     await this.resetConversation(phone);
                     return;
                 } else {
-                    await this.reply(msg, `Por favor, asegúrate de adjuntar una fotografía clara de tu orden médica usando el ícono de + , o escribe *NO* para cancelar el proceso.`);
+                    await this.reply(msg, `Por favor, asegúrate de adjuntar una fotografía clara de tu orden médica usando el ícono de 📎 o +, o escribe *NO* para cancelar el proceso.`);
                     return;
                 }
             }

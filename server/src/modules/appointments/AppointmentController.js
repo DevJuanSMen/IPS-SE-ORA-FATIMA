@@ -129,13 +129,16 @@ module.exports = (client) => {
             if (!code) return res.status(400).json({ error: 'Code is required' });
 
             try {
-                // Find appointment with this code
-                // Only validate active appointments (BOOKED or CONFIRMED)
                 const result = await db.query(
-                    `SELECT a.*, p.full_name as patient_name, d.full_name as doctor_name 
+                    `SELECT a.*, 
+                            p.full_name as patient_name, 
+                            p.phone as patient_phone,
+                            d.full_name as doctor_name,
+                            s.name as specialty_name
                      FROM appointments a
                      JOIN patients p ON a.patient_id = p.id
                      JOIN doctors d ON a.doctor_id = d.id
+                     LEFT JOIN specialties s ON a.specialty_id = s.id
                      WHERE a.confirmation_code = $1 AND a.status IN ('BOOKED', 'CONFIRMED')`,
                     [code.toUpperCase()]
                 );
@@ -146,13 +149,25 @@ module.exports = (client) => {
 
                 const appointment = result.rows[0];
 
+                // Parse notes JSON for EPS/entity details
+                let notesData = {};
+                if (appointment.notes) {
+                    try { notesData = JSON.parse(appointment.notes); } catch (e) { /* ignore */ }
+                }
+
                 // Update status to COMPLETED
-                await db.query('UPDATE appointments SET status = \'COMPLETED\' WHERE id = $1', [appointment.id]);
+                await db.query("UPDATE appointments SET status = 'COMPLETED' WHERE id = $1", [appointment.id]);
 
                 res.json({
                     success: true,
                     message: 'Cita validada y completada exitosamente.',
-                    appointment: appointment
+                    appointment: {
+                        ...appointment,
+                        entidad: notesData.entidad || null,
+                        regimen: notesData.regimen || null,
+                        autorizacion: notesData.autorizacion || null,
+                        consultation_type: notesData.consultation_type || null
+                    }
                 });
 
             } catch (err) {

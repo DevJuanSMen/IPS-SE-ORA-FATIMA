@@ -10,10 +10,13 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const db = require('./db/schema');
+const initializeSchema = require('./db/schema');
+const poolDb = require('./db/index');
+
 
 // Initialize Database
-db().catch(err => console.error('Database initialization error:', err));
+initializeSchema().catch(err => console.error('Database initialization error:', err));
+
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -22,7 +25,28 @@ const io = new Server(server, {
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+let isBotEnabledGlobal = true; // Global state in memory, backed by DB
+const loadSettings = async () => {
+  try {
+    if (!poolDb || typeof poolDb.query !== 'function') {
+      console.error('poolDb.query is not a function. Check db/index.js exports.');
+      return;
+    }
+    const res = await poolDb.query('SELECT value FROM settings WHERE key = $1', ['is_bot_enabled']);
+    if (res.rows.length > 0) {
+      isBotEnabledGlobal = res.rows[0].value === 'true';
+      console.log(`[SETTINGS] Global Bot Status: ${isBotEnabledGlobal ? 'ENABLED' : 'DISABLED'}`);
+    }
+  } catch (e) {
+    console.error('Error loading settings:', e);
+  }
+
+};
+loadSettings();
+
 
 const port = process.env.PORT || 3001;
 
@@ -97,14 +121,25 @@ const WhatsAppController = require('./modules/whatsapp/WhatsAppController');
 WhatsAppController.setSocket(io);
 
 
+const serverStartTime = Math.floor(Date.now() / 1000);
+
 client.on('message', async msg => {
+  // Ignorar mensajes antiguos del caché para no escribir a todo el mundo al iniciar
+  if (msg.timestamp < serverStartTime) {
+    console.log(`[BOT-DEBUG] Ignorando mensaje antiguo de ${msg.from}`);
+    return;
+  }
+
+  // We no longer block messages globally here. We pass the flag to the controller
+  // so it can allow messages from testing phones.
+
   console.log(`[BOT-DEBUG] Mensaje recibido: "${msg.body}" de ${msg.from}`);
   if (msg.body === '!ping') {
     msg.reply('pong');
     return;
   }
 
-  await WhatsAppController.handleMessage(client, msg);
+  await WhatsAppController.handleMessage(client, msg, isBotEnabledGlobal);
 });
 
 const initializeClient = async (isRetry = false) => {
@@ -153,12 +188,28 @@ initializeClient();
 io.on('connection', (socket) => {
   console.log('Admin panel connected');
 
-  // Send current status to the new connection
+  // Allow manual reset from UI
   socket.emit('status_sync', {
     status: whatsappStatus,
+    isBotEnabledGlobal
+  });
+
+  socket.on('toggle_global_bot', async (enabled) => {
+    isBotEnabledGlobal = enabled;
+    try {
+      if (poolDb && typeof poolDb.query === 'function') {
+        await poolDb.query('UPDATE settings SET value = $1 WHERE key = $2', [String(enabled), 'is_bot_enabled']);
+      }
+      io.emit('status_sync', { status: whatsappStatus, isBotEnabledGlobal });
+      console.log(`[SETTINGS] Global Bot ${enabled ? 'ENABLED' : 'DISABLED'} by admin`);
+    } catch (e) {
+      console.error('Error updating bot setting:', e);
+    }
+
   });
 
   // Allow manual reset from UI
+
   socket.on('reset_session', async () => {
     console.log('Manual session reset requested');
     try {
@@ -205,6 +256,8 @@ app.use('/api/appointments', authMiddleware(), require('./modules/appointments/a
 app.use('/api/chats', authMiddleware(), require('./modules/chat/chatRoutes')(client));
 app.use('/api/patients', authMiddleware(), require('./modules/patients/patientRoutes'));
 app.use('/api/reports', authMiddleware(), require('./modules/reports/reportsRoutes'));
+app.use('/api/chatbot', require('./modules/chatbot/chatbotRoutes'));
+app.use('/api/results', authMiddleware(), require('./modules/results/resultsRoutes'));
 
 app.get('/api/catalog', authMiddleware(), (req, res) => {
   try {

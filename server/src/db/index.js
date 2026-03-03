@@ -14,7 +14,14 @@ pool.on('error', (err) => {
     process.exit(-1);
 });
 
+if (typeof pool.query !== 'function') {
+    console.error('[DB] Critical: pool.query is not a function!');
+} else {
+    console.log('[DB] Database module initialized correctly');
+}
+
 module.exports = {
     query: (text, params) => pool.query(text, params),
     pool
 };
+

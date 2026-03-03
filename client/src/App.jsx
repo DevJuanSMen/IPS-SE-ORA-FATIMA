@@ -35,7 +35,21 @@ import {
     FileText,
     Download,
     Activity,
-    Filter
+    Filter,
+    CalendarDays, // Added from user's lucide-react list
+    Settings, // Added from user's lucide-react list
+    LogOut, // Added from user's lucide-react list
+    CheckCircle2, // Added from user's lucide-react list
+    XCircle, // Added from user's lucide-react list
+    Menu, // Added from user's lucide-react list
+    ArrowRight, // Added from user's lucide-react list
+    Shield, // Added from user's lucide-react list
+    Camera, // Added from user's lucide-react list
+    Save, // Added from user's lucide-react list
+    QrCode, // Added from user's lucide-react list
+    Bell, // Added from user's lucide-react list
+    Inbox, // Added from user's lucide-react list
+    MessageCircle // Added from user's lucide-react list
 } from 'lucide-react';
 import {
     BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -47,20 +61,42 @@ import html2canvas from 'html2canvas';
 import axios from 'axios';
 import LogoImage from '../assets/Diseño sin título (9).png';
 
+// Import Profile Component
+import ProfileView from './components/ProfileView';
+
 const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3001');
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 function App() {
+    const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || {});
     const [qrCode, setQrCode] = useState('');
     const [status, setStatus] = useState('disconnected'); // disconnected, connecting, qr, ready, error
     const [errorMsg, setErrorMsg] = useState('');
     const [activeTab, setActiveTab] = useState('dashboard');
     const [showPoliciesModal, setShowPoliciesModal] = useState(false);
+
+    // Bot Control
+    const [isBotGlobalActive, setIsBotGlobalActive] = useState(true);
+    const [unreadSuggestions, setUnreadSuggestions] = useState(0);
+    const [faqs, setFaqs] = useState([]);
+    const [inboxMessages, setInboxMessages] = useState([]);
+    const [showFaqModal, setShowFaqModal] = useState(false);
+    const [currentFaq, setCurrentFaq] = useState(null);
+    const [showReplyModal, setShowReplyModal] = useState(false);
+    const [currentReplyMessage, setCurrentReplyMessage] = useState(null);
+
+    const [usersList, setUsersList] = useState([]);
+    const [showUserModal, setShowUserModal] = useState(false);
+    const [newUserRole, setNewUserRole] = useState('RECEPTIONIST');
+
     const [specialties, setSpecialties] = useState([]);
     const [doctors, setDoctors] = useState([]);
     const [appointments, setAppointments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [services, setServices] = useState([]);
+    const [patients, setPatients] = useState([]);
+    const [patientsLoading, setPatientsLoading] = useState(false);
+    const [patientSearch, setPatientSearch] = useState('');
 
     // Admin Sub Tabs
     const [activeAdminSubTab, setActiveAdminSubTab] = useState('services');
@@ -174,6 +210,9 @@ function App() {
         socket.on('status_sync', (data) => {
             console.log('Status sync:', data);
             setStatus(data.status);
+            if (data.isBotEnabledGlobal !== undefined) {
+                setIsBotGlobalActive(data.isBotEnabledGlobal);
+            }
             if (data.message) setErrorMsg(data.message);
         });
 
@@ -195,6 +234,19 @@ function App() {
         };
     }, []);
 
+    // Bot Global Toggles
+    const toggleGlobalBot = () => {
+        const newState = !isBotGlobalActive;
+        setIsBotGlobalActive(newState);
+        socket.emit('toggle_global_bot', newState);
+    };
+
+    const resetBotSession = () => {
+        if (window.confirm('¿Estás seguro de que deseas cerrar sesión en WhatsApp y limpiar el caché? El servidor se reiniciará.')) {
+            socket.emit('reset_session');
+        }
+    };
+
     useEffect(() => {
         const handleNewMessage = (msgData) => {
             console.log('New message received via socket:', msgData);
@@ -213,12 +265,19 @@ function App() {
         fetchAllData();
     }, []);
 
+    useEffect(() => {
+        if (activeTab === 'patients') {
+            fetchPatients(patientSearch);
+        }
+    }, [activeTab, patientSearch]);
+
     const fetchAllData = () => {
         fetchServices();
         fetchSpecialties();
         fetchDoctors();
         fetchAppointments();
         fetchCatalogs();
+        fetchPatients();
     };
 
     const fetchCatalogs = async () => {
@@ -256,7 +315,128 @@ function App() {
 
     useEffect(() => {
         if (activeTab === 'reports') fetchReports();
+        if (activeTab === 'buzon') fetchInboxMessages();
+        if (activeTab === 'chatbot_config') fetchFaqs();
+        if (activeTab === 'users') fetchUsersList();
     }, [activeTab]);
+
+    const fetchUsersList = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${API_URL}/api/auth/users`, { headers: { Authorization: `Bearer ${token}` } });
+            setUsersList(res.data);
+        } catch (err) { console.error('Error fetching users:', err); }
+    };
+
+    const handleSaveUser = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = {
+            username: formData.get('username'),
+            password: formData.get('password'),
+            role: formData.get('role'),
+            full_name: formData.get('full_name')
+        };
+
+        if (data.role === 'DOCTOR') {
+            const refId = formData.get('reference_id');
+            if (!refId) {
+                return alert('Por favor, selecciona un médico para vincular.');
+            }
+            data.reference_id = refId;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            await axios.post(`${API_URL}/api/auth/register`, data, { headers: { Authorization: `Bearer ${token}` } });
+            setShowUserModal(false);
+            setNewUserRole('RECEPTIONIST');
+            fetchUsersList();
+        } catch (err) { alert('Error: ' + (err.response?.data?.error || err.message)); }
+    };
+
+    const handleToggleUserStatus = async (id) => {
+        try {
+            const token = localStorage.getItem('token');
+            await axios.patch(`${API_URL}/api/auth/users/${id}/toggle`, {}, { headers: { Authorization: `Bearer ${token}` } });
+            fetchUsersList();
+        } catch (err) { alert('Error: ' + (err.response?.data?.error || err.message)); }
+    };
+
+    useEffect(() => {
+        if (user?.role === 'ADMIN' || user?.role === 'RECEPTIONIST') {
+            fetchPendingCount();
+            const interval = setInterval(fetchPendingCount, 15000); // Check every 15s
+            return () => clearInterval(interval);
+        }
+    }, [user]);
+
+    const fetchFaqs = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${API_URL}/api/chatbot/faqs/all`, { headers: { Authorization: `Bearer ${token}` } });
+            setFaqs(res.data);
+        } catch (err) { console.error('Error fetching FAQs:', err); }
+    };
+
+    const fetchInboxMessages = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${API_URL}/api/chatbot/messages`, { headers: { Authorization: `Bearer ${token}` } });
+            setInboxMessages(res.data);
+            const pendingCount = res.data.filter(m => m.status === 'PENDING').length;
+            setUnreadSuggestions(pendingCount);
+        } catch (err) { console.error('Error fetching inbox:', err); }
+    };
+
+    const fetchPendingCount = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`${API_URL}/api/chatbot/messages/pending-count`, { headers: { Authorization: `Bearer ${token}` } });
+            setUnreadSuggestions(res.data.count);
+        } catch (err) { console.error('Error fetching count:', err); }
+    };
+
+    const handleSaveFaq = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = {
+            question: formData.get('question'),
+            answer: formData.get('answer'),
+            is_active: formData.get('is_active') === 'true'
+        };
+        try {
+            const token = localStorage.getItem('token');
+            if (currentFaq) {
+                await axios.put(`${API_URL}/api/chatbot/faqs/${currentFaq.id}`, data, { headers: { Authorization: `Bearer ${token}` } });
+            } else {
+                await axios.post(`${API_URL}/api/chatbot/faqs`, data, { headers: { Authorization: `Bearer ${token}` } });
+            }
+            setShowFaqModal(false);
+            fetchFaqs();
+        } catch (err) { alert('Error: ' + err.message); }
+    };
+
+    const handleDeleteFaq = async (id) => {
+        if (!window.confirm('¿Seguro que deseas eliminar esta pregunta frecuente?')) return;
+        try {
+            const token = localStorage.getItem('token');
+            await axios.delete(`${API_URL}/api/chatbot/faqs/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+            fetchFaqs();
+        } catch (err) { alert('Error al eliminar FAQ: ' + err.message); }
+    };
+
+    const handleReplyMessage = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const replyText = formData.get('reply_text');
+        try {
+            const token = localStorage.getItem('token');
+            await axios.put(`${API_URL}/api/chatbot/messages/${currentReplyMessage.id}/reply`, { reply_text: replyText }, { headers: { Authorization: `Bearer ${token}` } });
+            setShowReplyModal(false);
+            fetchInboxMessages();
+        } catch (err) { alert('Error enviando respuesta: ' + err.message); }
+    };
 
     const exportToExcel = (data, filename) => {
         const ws = XLSX.utils.json_to_sheet(data);
@@ -350,6 +530,20 @@ function App() {
             console.error('Error fetching appointments:', err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchPatients = async (query = '') => {
+        setPatientsLoading(true);
+        try {
+            const res = await axios.get(`${API_URL}/api/patients`, {
+                params: { search: query }
+            });
+            setPatients(res.data);
+        } catch (err) {
+            console.error('Error fetching patients:', err);
+        } finally {
+            setPatientsLoading(false);
         }
     };
 
@@ -870,8 +1064,6 @@ function App() {
         }
     };
 
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-
     const SidebarItem = ({ id, icon: Icon, label }) => (
         <button
             onClick={() => setActiveTab(id)}
@@ -941,6 +1133,7 @@ function App() {
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">USUARIOS</div>
                     <SidebarItem id="patients" icon={Users} label="Pacientes" />
                     <SidebarItem id="doctors" icon={Stethoscope} label="Médicos" />
+                    <SidebarItem id="users" icon={Shield} label="Empleados" />
                     <SidebarItem id="chat" icon={MessageSquare} label="Atención al cliente" />
                     <div className="relative">
                         {chats.some(c => c.advisor_requested) && (
@@ -955,7 +1148,13 @@ function App() {
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">TURNOS</div>
                     {/* Placeholder for future Turnos tab */}
 
-                    <div className="mt-8 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-t border-[#2C313C] pt-6">FAQ</div>
+                    <SidebarItem id="profile" icon={User} label="Mi Perfil" />
+
+                    <div className="mt-8 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-t border-[#2C313C] pt-6">CONFIGURACIÓN BOT</div>
+                    <SidebarItem id="buzon" icon={Inbox} label="Buzón (Web)" unread={unreadSuggestions} />
+                    <SidebarItem id="chatbot_config" icon={Settings} label="Configurar FAQs" />
+
+                    <div className="mt-8 mb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-t border-[#2C313C] pt-6">SOPORTE IPS</div>
                     <button onClick={() => setShowPoliciesModal(true)} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all text-slate-400 hover:bg-white/5 hover:text-white">
                         <span className="font-medium text-sm flex items-center gap-3">
                             <span className="w-4 h-4 rounded border border-current flex items-center justify-center text-[10px]">🏛️</span> Políticas IPS
@@ -1001,12 +1200,35 @@ function App() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <a href="https://entregaderesultados.com/ipsnsf_lab/" target="_blank" rel="noopener noreferrer" className="text-blue-500 dark:text-blue-400 text-sm font-medium hover:text-blue-600 dark:hover:text-blue-300 transition-colors">Portal de Resultados</a>
-                        <span className="text-slate-700 dark:text-white font-medium text-sm">👋 Hola, {user.username || 'Admin'}</span>
-                        <div className="w-10 h-10 bg-slate-100 dark:bg-[#1F232B] rounded-full flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-lg cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition">
-                            <User className="text-slate-300 w-5 h-5" />
+                        <button onClick={resetBotSession} className="p-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors" title="Reiniciar Sesión WhatsApp">
+                            <RefreshCw size={18} />
+                        </button>
+                        <button onClick={toggleGlobalBot} className={`p-2 rounded-lg transition-colors flex items-center gap-2 ${isBotGlobalActive ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`} title="Interruptor Global del Bot">
+                            <Power size={18} />
+                            <span className="text-sm font-bold hidden sm:inline">{isBotGlobalActive ? 'Bot ON' : 'Bot OFF'}</span>
+                        </button>
+
+                        <a href="https://entregaderesultados.com/ipsnsf_lab/" target="_blank" rel="noopener noreferrer" className="hidden sm:inline text-blue-500 dark:text-blue-400 text-sm font-medium hover:text-blue-600 dark:hover:text-blue-300 transition-colors">Portal de Resultados</a>
+
+                        <div className="relative cursor-pointer" onClick={() => setActiveTab('buzon')}>
+                            <Bell className="text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors" size={20} />
+                            {unreadSuggestions > 0 && (
+                                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                                    {unreadSuggestions}
+                                </span>
+                            )}
+                        </div>
+
+                        <span className="hidden sm:inline text-slate-700 dark:text-white font-medium text-sm">👋 Hola, {user.username || user.full_name || 'Admin'}</span>
+                        <div onClick={() => setActiveTab('profile')} className="w-10 h-10 bg-slate-100 dark:bg-[#1F232B] rounded-full flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-lg cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition overflow-hidden">
+                            {user.avatar_url ? (
+                                <img src={user.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                            ) : (
+                                <User className="text-slate-300 w-5 h-5" />
+                            )}
                         </div>
                     </div>
+
                 </header>
 
                 <div className="flex-1 p-8 overflow-auto">
@@ -1068,11 +1290,11 @@ function App() {
                                                     <div className="grid grid-cols-2 gap-4 text-sm">
                                                         <div>
                                                             <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Paciente</span>
-                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold">{validationResult.appointment.patient_name}</span>
+                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold">{validationResult.appointment.patient_name} <br /><span className="text-xs text-slate-500 font-medium">{validationResult.appointment.patient_phone}</span></span>
                                                         </div>
                                                         <div>
                                                             <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Médico Asignado</span>
-                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold">{validationResult.appointment.doctor_name}</span>
+                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold">{validationResult.appointment.doctor_name} <br /><span className="text-xs text-slate-500 font-medium">{validationResult.appointment.specialty_name}</span></span>
                                                         </div>
                                                         <div>
                                                             <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Fecha y Hora</span>
@@ -1081,7 +1303,21 @@ function App() {
                                                             </span>
                                                         </div>
                                                         <div>
-                                                            <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Estado</span>
+                                                            <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Entidad / EPS</span>
+                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold">
+                                                                {validationResult.appointment.entidad || 'PARTICULAR'} {validationResult.appointment.regimen ? `(${validationResult.appointment.regimen})` : ''}
+                                                            </span>
+                                                        </div>
+                                                        {validationResult.appointment.autorizacion && (
+                                                            <div className="col-span-2">
+                                                                <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Autorización</span>
+                                                                <span className="text-slate-800 dark:text-slate-200 font-semibold bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 rounded inline-block">
+                                                                    {validationResult.appointment.autorizacion}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                        <div className="col-span-2">
+                                                            <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Estado Consulta</span>
                                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
                                                                 COMPLETADA
                                                             </span>
@@ -1411,19 +1647,87 @@ function App() {
                     {
                         activeTab === 'patients' && (
                             <div className="space-y-6 animate-in fade-in duration-500">
-                                <header className="flex justify-between items-center mb-6">
+                                <header className="flex justify-between items-center bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl">
                                     <div>
-                                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Pacientes</h2>
-                                        <p className="text-slate-500 dark:text-slate-400 text-sm">Registro de pacientes y su historial de contacto.</p>
+                                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Base de Pacientes</h2>
+                                        <p className="text-slate-500 dark:text-slate-400 text-sm">Registro histórico de pacientes que han interactuado con el Bot.</p>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="relative group">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
+                                            <input
+                                                type="text"
+                                                placeholder="Buscar por nombre, ID o teléfono..."
+                                                value={patientSearch}
+                                                onChange={(e) => setPatientSearch(e.target.value)}
+                                                className="pl-10 pr-4 py-2.5 bg-slate-100 dark:bg-slate-700 border-none rounded-xl text-sm w-80 focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white"
+                                            />
+                                        </div>
+                                        <button onClick={() => fetchPatients(patientSearch)} className="p-2.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 transition-all shadow-sm">
+                                            <RefreshCw size={20} className={patientsLoading ? 'animate-spin' : ''} />
+                                        </button>
                                     </div>
                                 </header>
 
-                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-center text-slate-500">
-                                    <Users size={48} className="mx-auto mb-4 opacity-20" />
-                                    <p>La lista completa de pacientes interactivos se encuentra consolidada en la sección de Chat CRM.</p>
-                                    <button onClick={() => setActiveTab('chat')} className="mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-lg transition-colors">
-                                        Ir al Chat CRM
-                                    </button>
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xl">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700 text-xs uppercase tracking-wider">
+                                                    <th className="px-8 py-5">Paciente</th>
+                                                    <th className="px-8 py-5">Documento ID</th>
+                                                    <th className="px-8 py-5">Teléfono / WhatsApp</th>
+                                                    <th className="px-8 py-5">Fecha Registro</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                                {patients.length > 0 ? (
+                                                    patients.map((p) => (
+                                                        <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-all group">
+                                                            <td className="px-8 py-5">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center font-bold shadow-inner">
+                                                                        {p.full_name?.charAt(0).toUpperCase() || 'P'}
+                                                                    </div>
+                                                                    <div>
+                                                                        <div className="font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{p.full_name}</div>
+                                                                        <div className="text-[10px] text-slate-400 uppercase tracking-tighter">Paciente Verificado</div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-8 py-5 font-mono text-xs text-slate-600 dark:text-slate-400">{p.document_id || 'N/A'}</td>
+                                                            <td className="px-8 py-5">
+                                                                <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                                                                    <MessageSquare size={14} className="text-green-500" />
+                                                                    <span className="font-medium">{p.phone}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-8 py-5 text-sm text-slate-500">
+                                                                {p.created_at ? new Date(p.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '---'}
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan="4" className="px-8 py-20 text-center">
+                                                            {patientsLoading ? (
+                                                                <div className="flex flex-col items-center gap-3 text-slate-400">
+                                                                    <RefreshCw size={32} className="animate-spin text-blue-500" />
+                                                                    <p className="font-medium">Cargando base de datos...</p>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="flex flex-col items-center gap-3 text-slate-400">
+                                                                    <Users size={48} className="opacity-20 mb-2" />
+                                                                    <p className="font-medium text-lg">No se encontraron pacientes</p>
+                                                                    <p className="text-sm">Prueba ajustando los criterios de búsqueda.</p>
+                                                                </div>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             </div>
                         )
@@ -1958,8 +2262,245 @@ function App() {
                         </div>
                     )}
 
+                    {/* ============ USERS TAB ============ */}
+                    {activeTab === 'users' && (
+                        <div className="space-y-6 max-w-7xl mx-auto animate-in fade-in duration-500">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white flex items-center gap-3">
+                                        <Shield className="text-blue-500" size={32} /> Gestión de Empleados
+                                    </h2>
+                                    <p className="text-slate-500 dark:text-slate-400 mt-1">
+                                        Administra los accesos de recepcionistas, médicos y analistas.
+                                    </p>
+                                </div>
+                                <button onClick={() => setShowUserModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-lg text-sm">
+                                    <Plus size={16} /> Nuevo Empleado
+                                </button>
+                            </div>
+
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                {usersList.length === 0 ? (
+                                    <div className="p-8 text-center text-slate-500 italic">No hay empleados registrados.</div>
+                                ) : (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700">
+                                                    <th className="p-4 text-xs font-bold text-slate-500 uppercase">Usuario</th>
+                                                    <th className="p-4 text-xs font-bold text-slate-500 uppercase">Nombre</th>
+                                                    <th className="p-4 text-xs font-bold text-slate-500 uppercase">Rol</th>
+                                                    <th className="p-4 text-xs font-bold text-slate-500 uppercase">Estado</th>
+                                                    <th className="p-4 text-xs font-bold text-slate-500 uppercase text-right">Acciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                                                {usersList.map(u => (
+                                                    <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                                        <td className="p-4 font-semibold text-slate-900 dark:text-white">{u.username}</td>
+                                                        <td className="p-4 text-slate-600 dark:text-slate-300">{u.full_name || '-'}</td>
+                                                        <td className="p-4">
+                                                            <span className="px-2 py-1 bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-[10px] font-bold uppercase rounded-full tracking-wider">
+                                                                {u.role}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded-full tracking-wider ${u.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'}`}>
+                                                                {u.is_active ? 'Activo' : 'Inactivo'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4 text-right">
+                                                            <button
+                                                                onClick={() => handleToggleUserStatus(u.id)}
+                                                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${u.is_active ? 'bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-800/40' : 'bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-800/40'}`}
+                                                            >
+                                                                {u.is_active ? 'Desactivar' : 'Activar'}
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ============ PROFILE TAB ============ */}
+                    {activeTab === 'profile' && (
+                        <ProfileView user={user} onUpdateUser={setUser} />
+                    )}
+
+                    {/* ============ BUZON TAB ============ */}
+                    {activeTab === 'buzon' && (
+                        <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in duration-500">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white flex items-center gap-3">
+                                        <Inbox className="text-blue-500" size={32} /> Buzón Web
+                                    </h2>
+                                    <p className="text-slate-500 dark:text-slate-400 mt-1">
+                                        Consultas y mensajes dejados por pacientes a través del Bot.
+                                    </p>
+                                </div>
+                                <button onClick={fetchInboxMessages} className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-all font-medium text-sm">
+                                    <RefreshCw size={16} /> Actualizar
+                                </button>
+                            </div>
+
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                {inboxMessages.length === 0 ? (
+                                    <div className="p-8 text-center text-slate-500 italic">No hay mensajes en el buzón.</div>
+                                ) : (
+                                    <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                                        {inboxMessages.map(msg => (
+                                            <div key={msg.id} className={`p-5 flex flex-col gap-3 transition-colors ${msg.status === 'PENDING' ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
+                                                <div className="flex justify-between items-start gap-4">
+                                                    <div>
+                                                        <div className="flex items-center gap-3 mb-1">
+                                                            <span className="font-bold text-slate-900 dark:text-white">{msg.patient_phone}</span>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${msg.status === 'PENDING' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400' : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'}`}>
+                                                                {msg.status === 'PENDING' ? 'Pendiente' : 'Respondido'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm text-slate-700 dark:text-slate-300 font-medium">{msg.message}</p>
+                                                        <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                                                            <Clock size={12} /> {new Date(msg.created_at).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                    {msg.status === 'PENDING' && (
+                                                        <button
+                                                            onClick={() => { setCurrentReplyMessage(msg); setShowReplyModal(true); }}
+                                                            className="shrink-0 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/30 dark:hover:bg-blue-800/40 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+                                                        >
+                                                            <MessageSquare size={14} /> Responder
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {msg.reply_text && (
+                                                    <div className="mt-2 ml-4 pl-4 border-l-2 border-green-200 dark:border-green-800">
+                                                        <p className="text-sm text-slate-600 dark:text-slate-400"><span className="font-bold text-green-600 dark:text-green-400">Respuesta: </span>{msg.reply_text}</p>
+                                                        <p className="text-[10px] text-slate-400 mt-1">Por: {msg.replied_by_name || 'Agente'} - {new Date(msg.replied_at).toLocaleString()}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ============ CHATBOT CONFIG TAB ============ */}
+                    {activeTab === 'chatbot_config' && (
+                        <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in duration-500">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white flex items-center gap-3">
+                                        <MessageCircle className="text-purple-500" size={32} /> FAQs del Chatbot
+                                    </h2>
+                                    <p className="text-slate-500 dark:text-slate-400 mt-1">Configura las preguntas y respuestas automáticas de Lina.</p>
+                                </div>
+                                <button onClick={() => { setCurrentFaq(null); setShowFaqModal(true); }} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-lg text-sm">
+                                    <Plus size={16} /> Nueva FAQ
+                                </button>
+                            </div>
+
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                {faqs.length === 0 ? (
+                                    <div className="p-8 text-center text-slate-500 italic">No hay preguntas frecuentes configuradas.</div>
+                                ) : (
+                                    <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                                        {faqs.map((faq) => (
+                                            <div key={faq.id} className={`p-5 flex flex-col sm:flex-row gap-4 justify-between transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${!faq.is_active && 'opacity-60'}`}>
+                                                <div className="flex-1">
+                                                    <h3 className="font-bold text-slate-900 dark:text-white text-lg flex items-center gap-2">
+                                                        {faq.question}
+                                                        {!faq.is_active && <span className="bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full uppercase font-bold">Inactiva</span>}
+                                                    </h3>
+                                                    <p className="text-slate-600 dark:text-slate-300 text-sm mt-2 whitespace-pre-wrap leading-relaxed">{faq.answer}</p>
+                                                </div>
+                                                <div className="flex gap-2 shrink-0 self-start sm:self-center">
+                                                    <button onClick={() => { setCurrentFaq(faq); setShowFaqModal(true); }} className="text-blue-500 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 p-2 rounded-lg transition-colors" title="Editar">
+                                                        <Edit size={16} />
+                                                    </button>
+                                                    <button onClick={() => handleDeleteFaq(faq.id)} className="text-red-500 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 p-2 rounded-lg transition-colors" title="Eliminar">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                 </div >
             </main >
+
+            {/* FAQ Modal */}
+            {
+                showFaqModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                        <form onSubmit={handleSaveFaq} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-lg shadow-2xl space-y-6">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">{currentFaq ? 'Editar FAQ' : 'Nueva Pregunta Frecuente'}</h3>
+                                <button type="button" onClick={() => setShowFaqModal(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X size={20} /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Pregunta</label>
+                                    <input name="question" defaultValue={currentFaq?.question} required placeholder="Ej. ¿Cuáles son los horarios de atención?" className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Respuesta</label>
+                                    <textarea name="answer" defaultValue={currentFaq?.answer} required placeholder="Escribe la respuesta detallada..." className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none h-32 text-slate-900 dark:text-white placeholder-slate-400" />
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Estado</label>
+                                    <select name="is_active" defaultValue={currentFaq ? (currentFaq.is_active ? 'true' : 'false') : 'true'} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white">
+                                        <option value="true">Activa</option>
+                                        <option value="false">Inactiva</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95">
+                                {currentFaq ? 'Guardar Cambios' : 'Crear FAQ'}
+                            </button>
+                        </form>
+                    </div>
+                )
+            }
+
+            {/* Reply Modal */}
+            {
+                showReplyModal && currentReplyMessage && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                        <form onSubmit={handleReplyMessage} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-lg shadow-2xl space-y-6">
+                            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-700 pb-4">
+                                <h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><MessageSquare size={20} className="text-blue-500" /> Responder a Paciente</h3>
+                                <button type="button" onClick={() => setShowReplyModal(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X size={20} /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                                    <p className="text-xs font-bold uppercase text-slate-500 mb-1">El paciente escribió:</p>
+                                    <p className="text-sm text-slate-800 dark:text-slate-200 italic">"{currentReplyMessage.message}"</p>
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Tu respuesta (se enviará por WhatsApp)</label>
+                                    <textarea name="reply_text" required placeholder="Hola, te informamos que..." className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none h-32 text-slate-900 dark:text-white placeholder-slate-400" />
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95">
+                                Enviar Respuesta
+                            </button>
+                        </form>
+                    </div>
+                )
+            }
+
 
 
             {/* Service Modal */}
@@ -2918,6 +3459,71 @@ function App() {
                                 <button type="button" onClick={() => setShowPoliciesModal(false)} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all active:scale-95 shadow-lg">Entendido, cerrar documento</button>
                             </div>
                         </div>
+                    </div>
+                )
+            }
+
+            {/* User Details Form Modal */}
+            {
+                showUserModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                        <form onSubmit={handleSaveUser} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-md shadow-2xl space-y-6">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Shield size={24} className="text-blue-500" /> Nuevo Empleado</h3>
+                                <button type="button" onClick={() => { setShowUserModal(false); setNewUserRole('RECEPTIONIST'); }} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X size={20} /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Nombre Completo</label>
+                                    <input name="full_name" required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white" />
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Usuario</label>
+                                        <input name="username" required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white" />
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Contraseña</label>
+                                        <input name="password" type="text" required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white" />
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Rol</label>
+                                    <select
+                                        name="role"
+                                        required
+                                        className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white appearance-none"
+                                        value={newUserRole}
+                                        onChange={(e) => setNewUserRole(e.target.value)}
+                                    >
+                                        <option value="RECEPTIONIST">Atención al Cliente (Recepcionista)</option>
+                                        <option value="DOCTOR">Médico Especialista</option>
+                                        <option value="LAB">Laboratorio Clínico</option>
+                                    </select>
+                                </div>
+                                {newUserRole === 'DOCTOR' && (
+                                    <div className="flex flex-col gap-2 animate-in slide-in-from-top-4 duration-300">
+                                        <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Vincular a Perfil Médico</label>
+                                        <select
+                                            name="reference_id"
+                                            required
+                                            className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white appearance-none"
+                                        >
+                                            <option value="">Seleccione el médico a vincular...</option>
+                                            {doctors.filter(d => d.is_active).map(doc => (
+                                                <option key={doc.id} value={doc.id}>{doc.full_name}</option>
+                                            ))}
+                                        </select>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                            Al vincular la cuenta, este usuario solo podrá ver las citas agendadas con el médico seleccionado.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95">
+                                Registrar Acceso
+                            </button>
+                        </form>
                     </div>
                 )
             }
