@@ -157,7 +157,24 @@ function App() {
     const specChartRef = useRef(null);
     const trendsChartRef = useRef(null);
     const entityChartRef = useRef(null);
+    const dashboardRef = useRef(null); // Ref for the entire dashboard
     const PIE_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#34d399', '#f87171', '#a78bfa', '#fb923c'];
+
+    const exportDashboardToPDF = async () => {
+        if (!dashboardRef.current) return;
+        try {
+            const canvas = await html2canvas(dashboardRef.current, { scale: 2 });
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+            pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+            pdf.save(`reporte_general_${new Date().toISOString().split('T')[0]}.pdf`);
+        } catch (error) {
+            console.error('Error exporting dashboard:', error);
+            alert('Hubo un error al generar el PDF.');
+        }
+    };
 
 
     const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
@@ -364,7 +381,7 @@ function App() {
     };
 
     useEffect(() => {
-        if (user?.role === 'ADMIN' || user?.role === 'RECEPTIONIST') {
+        if (user?.role === 'ADMIN' || user?.role === 'RECEPTIONIST' || user?.role === 'MANAGER' || user?.role === 'DIRECTOR') {
             fetchPendingCount();
             const interval = setInterval(fetchPendingCount, 15000); // Check every 15s
             return () => clearInterval(interval);
@@ -942,7 +959,12 @@ function App() {
                 start_datetime: bookingData.start_datetime,
                 source: 'ADMIN', // Explicitly mark as Admin booking
                 total_price: bookingData.entidad === 'PARTICULAR' && bookingData.catalog_item ? bookingData.catalog_item.price : null,
-                notes: JSON.stringify({ entidad: bookingData.entidad, regimen: bookingData.regimen, autorizacion: bookingData.auth_number, consultation_type: bookingData.consultation_type })
+                notes: JSON.stringify({
+                    entidad: bookingData.entidad,
+                    regimen: bookingData.regimen,
+                    autorizacion: bookingData.auth_number,
+                    consultation_type: bookingData.catalog_item ? bookingData.catalog_item.name : bookingData.consultation_type
+                })
             });
 
             // 3. Show Success & Recommendations
@@ -1305,17 +1327,44 @@ function App() {
                                                         <div>
                                                             <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Entidad / EPS</span>
                                                             <span className="text-slate-800 dark:text-slate-200 font-semibold">
-                                                                {validationResult.appointment.entidad || 'PARTICULAR'} {validationResult.appointment.regimen ? `(${validationResult.appointment.regimen})` : ''}
+                                                                {validationResult.appointment.entidad || (() => {
+                                                                    try {
+                                                                        const notes = JSON.parse(validationResult.appointment.notes || "{}");
+                                                                        const ent = notes.entidad;
+                                                                        return ent ? (ent + (notes.regimen ? ` (${notes.regimen})` : "")) : "PARTICULAR";
+                                                                    } catch (e) { return "PARTICULAR"; }
+                                                                })()}
                                                             </span>
                                                         </div>
-                                                        {validationResult.appointment.autorizacion && (
-                                                            <div className="col-span-2">
-                                                                <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Autorización</span>
-                                                                <span className="text-slate-800 dark:text-slate-200 font-semibold bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 rounded inline-block">
-                                                                    {validationResult.appointment.autorizacion}
-                                                                </span>
-                                                            </div>
-                                                        )}
+                                                        {(() => {
+                                                            let auth = validationResult.appointment.autorizacion;
+                                                            let cType = validationResult.appointment.consultation_type;
+                                                            try {
+                                                                const notes = JSON.parse(validationResult.appointment.notes || "{}");
+                                                                auth = auth || notes.autorizacion;
+                                                                cType = cType || notes.consultation_type;
+                                                            } catch (e) { }
+                                                            return (
+                                                                <>
+                                                                    {auth && (
+                                                                        <div className="col-span-2">
+                                                                            <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Autorización</span>
+                                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 rounded inline-block">
+                                                                                {auth}
+                                                                            </span>
+                                                                        </div>
+                                                                    )}
+                                                                    {cType && (
+                                                                        <div className="col-span-2">
+                                                                            <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Tipo de Consulta / Examen Específico</span>
+                                                                            <span className="text-slate-800 dark:text-slate-200 font-semibold bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1 rounded inline-block border border-blue-100 dark:border-blue-800/30">
+                                                                                {cType}
+                                                                            </span>
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            );
+                                                        })()}
                                                         <div className="col-span-2">
                                                             <span className="text-slate-400 block text-xs uppercase font-bold mb-1">Estado Consulta</span>
                                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
@@ -1328,25 +1377,42 @@ function App() {
                                                 <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-5 border border-blue-100 dark:border-blue-800/30">
                                                     <h4 className="text-sm font-bold text-blue-900 dark:text-blue-300 mb-2 uppercase tracking-wider">Desglose de Pago</h4>
 
-                                                    {validationResult.appointment.total_price ? (
-                                                        <div className="space-y-3">
-                                                            <div className="flex justify-between items-center text-sm">
-                                                                <span className="text-slate-600 dark:text-slate-400">Tipo de Reserva</span>
-                                                                <span className="font-semibold text-slate-800 dark:text-slate-200">Paciente Particular</span>
-                                                            </div>
-                                                            <div className="pt-3 border-t border-blue-200 dark:border-blue-800/50 flex justify-between items-end">
-                                                                <span className="text-slate-800 dark:text-slate-200 font-bold uppercase">Total a Cobrar Física</span>
-                                                                <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                                                                    ${Number(validationResult.appointment.total_price).toLocaleString('es-CO')}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex justify-between items-center text-sm">
-                                                            <span className="text-slate-600 dark:text-slate-400">Tipo de Reserva</span>
-                                                            <span className="font-bold text-slate-800 dark:text-slate-200 px-3 py-1 bg-slate-200 dark:bg-slate-700 rounded-full">Por Entidad</span>
-                                                        </div>
-                                                    )}
+                                                    {(() => {
+                                                        let entidadReal = validationResult.appointment.entidad;
+                                                        if (!entidadReal) {
+                                                            try {
+                                                                const notes = JSON.parse(validationResult.appointment.notes || "{}");
+                                                                entidadReal = notes.entidad;
+                                                            } catch (e) { }
+                                                        }
+                                                        const isParticular = !entidadReal || entidadReal === 'PARTICULAR';
+
+                                                        if (isParticular) {
+                                                            return (
+                                                                <div className="space-y-3">
+                                                                    <div className="flex justify-between items-center text-sm">
+                                                                        <span className="text-slate-600 dark:text-slate-400">Tipo de Reserva</span>
+                                                                        <span className="font-semibold text-slate-800 dark:text-slate-200">Paciente Particular</span>
+                                                                    </div>
+                                                                    <div className="pt-3 border-t border-blue-200 dark:border-blue-800/50 flex justify-between items-end">
+                                                                        <span className="text-slate-800 dark:text-slate-200 font-bold uppercase">Total a Cobrar Física</span>
+                                                                        <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                                                                            {validationResult.appointment.total_price != null
+                                                                                ? `$${Number(validationResult.appointment.total_price).toLocaleString('es-CO')}`
+                                                                                : 'Por Determinar'}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        } else {
+                                                            return (
+                                                                <div className="flex justify-between items-center text-sm">
+                                                                    <span className="text-slate-600 dark:text-slate-400">Tipo de Reserva</span>
+                                                                    <span className="font-bold text-slate-800 dark:text-slate-200 px-3 py-1 bg-slate-200 dark:bg-slate-700 rounded-full">Por Entidad</span>
+                                                                </div>
+                                                            );
+                                                        }
+                                                    })()}
                                                 </div>
 
                                                 <button
@@ -1532,7 +1598,7 @@ function App() {
                                                     <th className="px-6 py-4">Médico</th>
                                                     <th className="px-6 py-4">Fecha y Hora</th>
                                                     <th className="px-6 py-4">Estado</th>
-                                                    <th className="px-6 py-4">Origen</th>
+                                                    <th className="px-6 py-4">Entidad y Tipo</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
@@ -2102,161 +2168,166 @@ function App() {
                                         {reportLoading ? <RefreshCw size={14} className="animate-spin" /> : <Activity size={14} />}
                                         {reportLoading ? 'Calculando...' : 'Actualizar'}
                                     </button>
+                                    <button onClick={exportDashboardToPDF} className="bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 shadow-lg">
+                                        <FileText size={14} /> Descargar PDF General
+                                    </button>
                                 </div>
                             </div>
 
-                            {/* KPI Summary Cards */}
-                            {reportSummary && (
-                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                    {[
-                                        { label: 'Citas en el período', value: reportSummary.totalCitas, icon: Calendar, color: 'indigo' },
-                                        { label: 'Citas Hoy', value: reportSummary.citasHoy, icon: Activity, color: 'green' },
-                                        { label: 'Pacientes únicos', value: reportSummary.pacientesUnicos, icon: Users, color: 'blue' },
-                                        { label: 'Tasa de cancelación', value: `${reportSummary.cancelRate}%`, icon: TrendingUp, color: 'red' },
-                                    ].map(({ label, value, icon: Icon, color }) => (
-                                        <div key={label} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-100 dark:border-slate-700 shadow-sm flex items-center gap-4">
-                                            <div className={`w-12 h-12 rounded-xl bg-${color}-100 dark:bg-${color}-500/20 flex items-center justify-center shrink-0`}>
-                                                <Icon className={`text-${color}-500`} size={22} />
+                            <div ref={dashboardRef} className="space-y-8 p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl">
+                                {/* KPI Summary Cards */}
+                                {reportSummary && (
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                        {[
+                                            { label: 'Citas en el período', value: reportSummary.totalCitas, icon: Calendar, color: 'indigo' },
+                                            { label: 'Citas Hoy', value: reportSummary.citasHoy, icon: Activity, color: 'green' },
+                                            { label: 'Pacientes únicos', value: reportSummary.pacientesUnicos, icon: Users, color: 'blue' },
+                                            { label: 'Tasa de cancelación', value: `${reportSummary.cancelRate}%`, icon: TrendingUp, color: 'red' },
+                                        ].map(({ label, value, icon: Icon, color }) => (
+                                            <div key={label} className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-100 dark:border-slate-700 shadow-sm flex items-center gap-4">
+                                                <div className={`w-12 h-12 rounded-xl bg-${color}-100 dark:bg-${color}-500/20 flex items-center justify-center shrink-0`}>
+                                                    <Icon className={`text-${color}-500`} size={22} />
+                                                </div>
+                                                <div>
+                                                    <p className="text-2xl font-extrabold text-slate-900 dark:text-white">{value}</p>
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{label}</p>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <p className="text-2xl font-extrabold text-slate-900 dark:text-white">{value}</p>
-                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{label}</p>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Charts Row */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Top Especialidades Bar Chart */}
+                                    <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><BarChart2 size={18} className="text-indigo-500" /> Citas por Especialidad</h3>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => exportToExcel(reportBySpecialty.map(r => ({ Especialidad: r.name, Total: r.total, Agendadas: r.agendadas, Canceladas: r.canceladas, Atendidas: r.atendidas })), 'reporte_especialidades')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                                    <Download size={12} /> Excel
+                                                </button>
+                                                <button onClick={() => exportChartToPDF(specChartRef, 'Citas por Especialidad')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                                    <FileText size={12} /> PDF
+                                                </button>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
+                                        <div ref={specChartRef}>
+                                            <ResponsiveContainer width="100%" height={260}>
+                                                <BarChart data={reportBySpecialty.slice(0, 8)} margin={{ top: 5, right: 5, left: -20, bottom: 60 }}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} angle={-30} textAnchor="end" />
+                                                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                    <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
+                                                    <Bar dataKey="total" fill="#6366f1" radius={[6, 6, 0, 0]} name="Total" />
+                                                    <Bar dataKey="canceladas" fill="#f87171" radius={[6, 6, 0, 0]} name="Canceladas" />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
 
-                            {/* Charts Row */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                {/* Top Especialidades Bar Chart */}
-                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><BarChart2 size={18} className="text-indigo-500" /> Citas por Especialidad</h3>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => exportToExcel(reportBySpecialty.map(r => ({ Especialidad: r.name, Total: r.total, Agendadas: r.agendadas, Canceladas: r.canceladas, Atendidas: r.atendidas })), 'reporte_especialidades')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
-                                                <Download size={12} /> Excel
-                                            </button>
-                                            <button onClick={() => exportChartToPDF(specChartRef, 'Citas por Especialidad')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                    {/* Trends Line Chart */}
+                                    <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><TrendingUp size={18} className="text-green-500" /> Tendencia Semanal</h3>
+                                            <button onClick={() => exportChartToPDF(trendsChartRef, 'Tendencia Semanal de Citas')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
                                                 <FileText size={12} /> PDF
                                             </button>
                                         </div>
+                                        <div ref={trendsChartRef}>
+                                            <ResponsiveContainer width="100%" height={260}>
+                                                <LineChart data={reportTrends} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                                    <XAxis dataKey="semana" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                    <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
+                                                    <Legend />
+                                                    <Line type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 4 }} name="Total" />
+                                                    <Line type="monotone" dataKey="atendidas" stroke="#22d3ee" strokeWidth={2} dot={{ r: 3 }} name="Atendidas" />
+                                                    <Line type="monotone" dataKey="canceladas" stroke="#f87171" strokeWidth={2} dot={{ r: 3 }} name="Canceladas" />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
                                     </div>
-                                    <div ref={specChartRef}>
-                                        <ResponsiveContainer width="100%" height={260}>
-                                            <BarChart data={reportBySpecialty.slice(0, 8)} margin={{ top: 5, right: 5, left: -20, bottom: 60 }}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} angle={-30} textAnchor="end" />
-                                                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                </div>
+
+                                {/* Pie + Services Row */}
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                    {/* Entity Pie Chart */}
+                                    <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6 lg:col-span-1">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2"><Building2 size={16} className="text-amber-500" /> Por Entidad</h3>
+                                            <button onClick={() => exportChartToPDF(entityChartRef, 'Distribucion por Entidad')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded-lg flex items-center gap-1 font-medium transition-all">
+                                                <FileText size={11} /> PDF
+                                            </button>
+                                        </div>
+                                        <div ref={entityChartRef}>
+                                            {reportByEntity.length > 0 ? (
+                                                <ResponsiveContainer width="100%" height={220}>
+                                                    <PieChart>
+                                                        <Pie data={reportByEntity} dataKey="total" nameKey="entidad" cx="50%" cy="50%" outerRadius={80} label={({ entidad, percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                                                            {reportByEntity.map((_, idx) => <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />)}
+                                                        </Pie>
+                                                        <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} formatter={(v, n) => [v, n]} />
+                                                        <Legend formatter={(v) => <span className="text-xs text-slate-600 dark:text-slate-300">{v}</span>} />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            ) : (<div className="h-[220px] flex items-center justify-center text-slate-400 text-sm italic">Sin datos de entidades aún.</div>)}
+                                        </div>
+                                    </div>
+
+                                    {/* Services Bar */}
+                                    <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6 lg:col-span-2">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Stethoscope size={18} className="text-cyan-500" /> Citas por Servicio</h3>
+                                            <button onClick={() => exportToExcel(reportByService.map(r => ({ Servicio: r.name, Total: r.total })), 'reporte_servicios')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                                <Download size={12} /> Excel
+                                            </button>
+                                        </div>
+                                        <ResponsiveContainer width="100%" height={220}>
+                                            <BarChart data={reportByService} layout="vertical" margin={{ top: 0, right: 10, left: 60, bottom: 0 }}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                                                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} width={90} />
                                                 <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
-                                                <Bar dataKey="total" fill="#6366f1" radius={[6, 6, 0, 0]} name="Total" />
-                                                <Bar dataKey="canceladas" fill="#f87171" radius={[6, 6, 0, 0]} name="Canceladas" />
+                                                <Bar dataKey="total" fill="#22d3ee" radius={[0, 6, 6, 0]} name="Total" />
                                             </BarChart>
                                         </ResponsiveContainer>
                                     </div>
                                 </div>
 
-                                {/* Trends Line Chart */}
+                                {/* Doctors Table */}
                                 <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
                                     <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><TrendingUp size={18} className="text-green-500" /> Tendencia Semanal</h3>
-                                        <button onClick={() => exportChartToPDF(trendsChartRef, 'Tendencia Semanal de Citas')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
-                                            <FileText size={12} /> PDF
+                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Users size={18} className="text-violet-500" /> Médicos más Solicitados</h3>
+                                        <button onClick={() => exportToExcel(reportByDoctor.map(r => ({ Medico: r.name, Especialidad: r.especialidad, Total: r.total, Canceladas: r.canceladas, Atendidas: r.atendidas })), 'reporte_medicos')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
+                                            <Download size={12} /> Exportar Excel
                                         </button>
                                     </div>
-                                    <div ref={trendsChartRef}>
-                                        <ResponsiveContainer width="100%" height={260}>
-                                            <LineChart data={reportTrends} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                                <XAxis dataKey="semana" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                                                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                                                <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
-                                                <Legend />
-                                                <Line type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 4 }} name="Total" />
-                                                <Line type="monotone" dataKey="atendidas" stroke="#22d3ee" strokeWidth={2} dot={{ r: 3 }} name="Atendidas" />
-                                                <Line type="monotone" dataKey="canceladas" stroke="#f87171" strokeWidth={2} dot={{ r: 3 }} name="Canceladas" />
-                                            </LineChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Pie + Services Row */}
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                {/* Entity Pie Chart */}
-                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6 lg:col-span-1">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2"><Building2 size={16} className="text-amber-500" /> Por Entidad</h3>
-                                        <button onClick={() => exportChartToPDF(entityChartRef, 'Distribucion por Entidad')} className="text-xs bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded-lg flex items-center gap-1 font-medium transition-all">
-                                            <FileText size={11} /> PDF
-                                        </button>
-                                    </div>
-                                    <div ref={entityChartRef}>
-                                        {reportByEntity.length > 0 ? (
-                                            <ResponsiveContainer width="100%" height={220}>
-                                                <PieChart>
-                                                    <Pie data={reportByEntity} dataKey="total" nameKey="entidad" cx="50%" cy="50%" outerRadius={80} label={({ entidad, percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
-                                                        {reportByEntity.map((_, idx) => <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />)}
-                                                    </Pie>
-                                                    <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} formatter={(v, n) => [v, n]} />
-                                                    <Legend formatter={(v) => <span className="text-xs text-slate-600 dark:text-slate-300">{v}</span>} />
-                                                </PieChart>
-                                            </ResponsiveContainer>
-                                        ) : (<div className="h-[220px] flex items-center justify-center text-slate-400 text-sm italic">Sin datos de entidades aún.</div>)}
-                                    </div>
-                                </div>
-
-                                {/* Services Bar */}
-                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6 lg:col-span-2">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Stethoscope size={18} className="text-cyan-500" /> Citas por Servicio</h3>
-                                        <button onClick={() => exportToExcel(reportByService.map(r => ({ Servicio: r.name, Total: r.total })), 'reporte_servicios')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
-                                            <Download size={12} /> Excel
-                                        </button>
-                                    </div>
-                                    <ResponsiveContainer width="100%" height={220}>
-                                        <BarChart data={reportByService} layout="vertical" margin={{ top: 0, right: 10, left: 60, bottom: 0 }}>
-                                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                                            <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                                            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} width={90} />
-                                            <Tooltip contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }} />
-                                            <Bar dataKey="total" fill="#22d3ee" radius={[0, 6, 6, 0]} name="Total" />
-                                        </BarChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-
-                            {/* Doctors Table */}
-                            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-6">
-                                <div className="flex items-center justify-between mb-4">
-                                    <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Users size={18} className="text-violet-500" /> Médicos más Solicitados</h3>
-                                    <button onClick={() => exportToExcel(reportByDoctor.map(r => ({ Medico: r.name, Especialidad: r.especialidad, Total: r.total, Canceladas: r.canceladas, Atendidas: r.atendidas })), 'reporte_medicos')} className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all">
-                                        <Download size={12} /> Exportar Excel
-                                    </button>
-                                </div>
-                                <div className="overflow-auto rounded-xl border border-slate-100 dark:border-slate-700">
-                                    <table className="w-full text-sm">
-                                        <thead className="bg-slate-50 dark:bg-slate-900/60">
-                                            <tr>
-                                                {['Médico', 'Especialidad', 'Total', 'Atendidas', 'Canceladas'].map(h => (
-                                                    <th key={h} className="text-left px-4 py-3 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">{h}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                                            {reportByDoctor.length === 0 ? (
-                                                <tr><td colSpan={5} className="text-center py-8 text-slate-400 italic">Sin citas en este período.</td></tr>
-                                            ) : reportByDoctor.map((d, i) => (
-                                                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                                                    <td className="px-4 py-3 font-semibold text-slate-800 dark:text-white">Dr. {d.name}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{d.especialidad || '—'}</td>
-                                                    <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.total}</span></td>
-                                                    <td className="px-4 py-3"><span className="bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.atendidas}</span></td>
-                                                    <td className="px-4 py-3"><span className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.canceladas}</span></td>
+                                    <div className="overflow-auto rounded-xl border border-slate-100 dark:border-slate-700">
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-slate-50 dark:bg-slate-900/60">
+                                                <tr>
+                                                    {['Médico', 'Especialidad', 'Total', 'Atendidas', 'Canceladas'].map(h => (
+                                                        <th key={h} className="text-left px-4 py-3 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">{h}</th>
+                                                    ))}
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                                                {reportByDoctor.length === 0 ? (
+                                                    <tr><td colSpan={5} className="text-center py-8 text-slate-400 italic">Sin citas en este período.</td></tr>
+                                                ) : reportByDoctor.map((d, i) => (
+                                                    <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                                                        <td className="px-4 py-3 font-semibold text-slate-800 dark:text-white">Dr. {d.name}</td>
+                                                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{d.especialidad || '—'}</td>
+                                                        <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.total}</span></td>
+                                                        <td className="px-4 py-3"><span className="bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.atendidas}</span></td>
+                                                        <td className="px-4 py-3"><span className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300 font-bold px-2.5 py-0.5 rounded-full text-xs">{d.canceladas}</span></td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -3499,6 +3570,8 @@ function App() {
                                         <option value="RECEPTIONIST">Atención al Cliente (Recepcionista)</option>
                                         <option value="DOCTOR">Médico Especialista</option>
                                         <option value="LAB">Laboratorio Clínico</option>
+                                        <option value="MANAGER">Gerente</option>
+                                        <option value="DIRECTOR">Junta Directiva (Administrador)</option>
                                     </select>
                                 </div>
                                 {newUserRole === 'DOCTOR' && (
