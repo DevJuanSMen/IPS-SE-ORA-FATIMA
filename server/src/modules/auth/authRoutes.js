@@ -9,9 +9,9 @@ router.post('/setup-admin', authController.registerInitialAdmin);
 router.post('/register-patient', authController.registerPatient);
 
 // Admin-only: create staff users
-router.post('/register', authMiddleware(['ADMIN']), authController.registerUser);
-router.get('/users', authMiddleware(['ADMIN']), authController.getUsers);
-router.patch('/users/:id/toggle', authMiddleware(['ADMIN']), authController.toggleUserStatus);
+router.post('/register', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR']), authController.registerUser);
+router.get('/users', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR']), authController.getUsers);
+router.patch('/users/:id/toggle', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR']), authController.toggleUserStatus);
 
 // Profile (any authenticated user)
 router.get('/me', authMiddleware([]), authController.getMe);

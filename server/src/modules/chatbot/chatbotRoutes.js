@@ -12,13 +12,13 @@ router.get('/messages/patient/:patient_id', authMiddleware([]), chatbot.getPatie
 router.get('/messages/patient/:patient_id/unread', authMiddleware([]), chatbot.getPatientUnreadReplies);
 
 // Admin/Receptionist: manage FAQs and inbox
-router.get('/faqs/all', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.getAllFaqs);
-router.post('/faqs', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.createFaq);
-router.put('/faqs/:id', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.updateFaq);
-router.delete('/faqs/:id', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.deleteFaq);
+router.get('/faqs/all', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.getAllFaqs);
+router.post('/faqs', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.createFaq);
+router.put('/faqs/:id', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.updateFaq);
+router.delete('/faqs/:id', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.deleteFaq);
 
-router.get('/messages', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.getMessages);
-router.get('/messages/pending-count', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.getPendingCount);
-router.put('/messages/:id/reply', authMiddleware(['ADMIN', 'RECEPTIONIST']), chatbot.replyMessage);
+router.get('/messages', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.getMessages);
+router.get('/messages/pending-count', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.getPendingCount);
+router.put('/messages/:id/reply', authMiddleware(['ADMIN', 'MANAGER', 'DIRECTOR', 'RECEPTIONIST']), chatbot.replyMessage);
 
 module.exports = router;

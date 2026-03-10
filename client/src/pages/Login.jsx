@@ -22,7 +22,7 @@ export default function Login() {
     const [regError, setRegError] = useState('');
     const [regForm, setRegForm] = useState({
         username: '', password: '', confirmPassword: '', full_name: '',
-        email: '', phone: '', document_id: '', gender: '', blood_type: ''
+        email: '', phone: '', document_id: '', gender: '', birth_date: ''
     });
     const navigate = useNavigate();
 
@@ -62,7 +62,7 @@ export default function Login() {
                 phone: regForm.phone,
                 document_id: regForm.document_id,
                 gender: regForm.gender,
-                blood_type: regForm.blood_type
+                birth_date: regForm.birth_date
             });
             setRegSuccess(true);
         } catch (err) {
@@ -311,16 +311,10 @@ export default function Login() {
                                             </div>
                                         </div>
                                         <div>
-                                            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Tipo de sangre</label>
-                                            <div className="relative">
-                                                <select value={regForm.blood_type} onChange={e => setRegForm(p => ({ ...p, blood_type: e.target.value }))}
-                                                    className="w-full px-3 py-2.5 rounded-xl text-sm outline-none appearance-none"
-                                                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: regForm.blood_type ? 'white' : '#94a3b8' }}>
-                                                    <option value="">Selecciona</option>
-                                                    {bloodTypes.map(bt => <option key={bt} value={bt}>{bt}</option>)}
-                                                </select>
-                                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
-                                            </div>
+                                            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Fecha de nacimiento</label>
+                                            <input type="date" value={regForm.birth_date} onChange={e => setRegForm(p => ({ ...p, birth_date: e.target.value }))}
+                                                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none appearance-none"
+                                                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: regForm.birth_date ? 'white' : '#94a3b8' }} />
                                         </div>
                                     </div>
 

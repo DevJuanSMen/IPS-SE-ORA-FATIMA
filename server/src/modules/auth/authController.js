@@ -79,9 +79,9 @@ const registerInitialAdmin = async (req, res) => {
 const registerUser = async (req, res) => {
     try {
         const { username, password, role, full_name, email, reference_id } = req.body;
-        const validRoles = ['DOCTOR', 'RECEPTIONIST', 'LAB'];
+        const validRoles = ['DOCTOR', 'RECEPTIONIST', 'LAB', 'MANAGER', 'DIRECTOR'];
         if (!validRoles.includes(role)) {
-            return res.status(400).json({ error: 'Invalid role. Must be DOCTOR, RECEPTIONIST, or LAB' });
+            return res.status(400).json({ error: 'Invalid role. Must be DOCTOR, RECEPTIONIST, LAB, MANAGER, or DIRECTOR' });
         }
 
         const existing = await db.query('SELECT id FROM users WHERE username = $1', [username]);
@@ -109,7 +109,7 @@ const registerUser = async (req, res) => {
 // Public: patient self-registration
 const registerPatient = async (req, res) => {
     try {
-        const { username, password, full_name, email, phone, document_id, gender, blood_type } = req.body;
+        const { username, password, full_name, email, phone, document_id, gender, birth_date } = req.body;
 
         if (!username || !password || !full_name || !phone) {
             return res.status(400).json({ error: 'username, password, full_name and phone are required' });
@@ -122,10 +122,10 @@ const registerPatient = async (req, res) => {
 
         // Create patient record
         const patientRes = await db.query(
-            `INSERT INTO patients (full_name, phone, document_id) VALUES ($1, $2, $3) 
-             ON CONFLICT (phone) DO UPDATE SET full_name = $1, document_id = $3
+            `INSERT INTO patients (full_name, phone, document_id, gender, birth_date) VALUES ($1, $2, $3, $4, $5) 
+             ON CONFLICT (phone) DO UPDATE SET full_name = $1, document_id = $3, gender = $4, birth_date = $5
              RETURNING id`,
-            [full_name, phone, document_id || null]
+            [full_name, phone, document_id || null, gender || null, birth_date || null]
         );
         const patientId = patientRes.rows[0].id;
 
