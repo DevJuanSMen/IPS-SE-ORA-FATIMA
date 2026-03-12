@@ -64,8 +64,8 @@ import LogoImage from '../assets/Diseño sin título (9).png';
 // Import Profile Component
 import ProfileView from './components/ProfileView';
 
-const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3001');
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = "/api";
+const socket = io("https://portal.ipsnuestrasenoradefatima.com");
 
 function App() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || {});

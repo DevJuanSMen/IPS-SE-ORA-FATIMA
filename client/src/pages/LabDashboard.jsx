@@ -4,7 +4,7 @@ import { LogOut, Sun, Moon, FolderOpen, Image, Upload, X, ChevronLeft, Search, T
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import ProfileView from '../components/ProfileView';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 export default function LabDashboard() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));

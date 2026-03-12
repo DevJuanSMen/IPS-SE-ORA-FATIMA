@@ -8,7 +8,7 @@ import {
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import ProfileView from '../components/ProfileView';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 const socket = io(API_URL);
 
 export default function ReceptionistDashboard() {
