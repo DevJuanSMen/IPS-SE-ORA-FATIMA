@@ -150,8 +150,15 @@ const WhatsAppController = {
 
     // Main message handler
     async handleMessage(client, msg, isBotEnabledGlobal = true) {
+        // Ignore status updates, system notifications, and group messages
+        // This prevents the bot from replying to a status (which actually uploads a status)
+        if (msg.isStatus || msg.from === 'status@broadcast' || msg.id?.remote === 'status@broadcast' || msg.type === 'e2e_notification' || msg.from.includes('@g.us')) {
+            console.log(`[BOT-DEBUG] Ignoring non-user message (status/group/notification) from: ${msg.from}`);
+            return;
+        }
+
         const phone = msg.from.split('@')[0]; // Clean @c.us or @lid
-        const text = msg.body.trim();
+        const text = (msg.body || '').trim();
         console.log(`[AI-BOT] Received from ${msg.from} (clean: ${phone}): "${text}"`);
 
         // Test mode commands
@@ -247,13 +254,11 @@ const WhatsAppController = {
 
                 payload.patient_id_number = cedula;
 
+                const entitiesRes = await db.query('SELECT name FROM entities WHERE is_active = TRUE ORDER BY name ASC');
                 let txt = '¡Gracias! ¿A qué entidad perteneces? Responde con el número correspondiente:\n\n';
-                txt += '1. Particular\n';
-                txt += '2. ARL\n';
-                txt += '3. SOAT\n';
-                txt += '4. EPS Alianza Salud\n';
-                txt += '5. EPS Compensar\n';
-                txt += '6. Medicina Prepagada';
+                entitiesRes.rows.forEach((ent, idx) => {
+                    txt += `${idx + 1}. ${ent.name}\n`;
+                });
 
                 await this.reply(msg, txt);
 
@@ -267,14 +272,19 @@ const WhatsAppController = {
                 const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
                 const index = parseInt(text);
 
-                if (isNaN(index) || index < 1 || index > 6) {
-                    await this.reply(msg, 'Por favor, responde con un número válido del 1 al 6.');
+                const entitiesCountRes = await db.query('SELECT count(*) FROM entities WHERE is_active = TRUE');
+                const maxIndex = parseInt(entitiesCountRes.rows[0].count);
+
+                if (isNaN(index) || index < 1 || index > maxIndex) {
+                    await this.reply(msg, `Por favor, responde con un número válido del 1 al ${maxIndex}.`);
                     return;
                 }
 
-                const entidades = ['PARTICULAR', 'ARL', 'SOAT', 'ALIANZA SALUD', 'COMPENSAR', 'MEDICINA PREPAGADA'];
-                const entidadStr = entidades[index - 1];
-                payload.entidad = entidadStr;
+                const entitiesRes = await db.query('SELECT name FROM entities WHERE is_active = TRUE ORDER BY name ASC');
+                const entities = entitiesRes.rows.map(r => r.name);
+                const entityStr = entities[index - 1];
+                payload.entidad = entityStr;
+                payload.available_entities = entities;
 
                 const getMenuText = async (payloadObj) => {
                     const services = await db.query('SELECT id, name FROM services WHERE is_active = TRUE ORDER BY name');

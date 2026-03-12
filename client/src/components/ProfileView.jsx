@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { User, Mail, Shield, Camera, Lock, Save } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+const API_URL = '';
 
 export default function ProfileView({ user, onUpdateUser }) {
     const [name, setName] = useState(user.full_name || user.username || '');

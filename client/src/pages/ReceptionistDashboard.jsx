@@ -8,8 +8,8 @@ import {
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import ProfileView from '../components/ProfileView';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
-const socket = io(API_URL);
+const API_URL = '';
+const socket = io('/');
 
 export default function ReceptionistDashboard() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));
@@ -57,14 +57,14 @@ export default function ReceptionistDashboard() {
 
     const fetchChats = async () => {
         try {
-            const res = await axios.get(`${API_URL} /api/chats`);
+            const res = await axios.get(`${API_URL}/api/chats`);
             setChats(res.data);
         } catch (err) { console.error(err); }
     };
 
     const fetchMessages = async (phone) => {
         try {
-            const res = await axios.get(`${API_URL} /api/chats / ${phone}/messages`);
+            const res = await axios.get(`${API_URL}/api/chats/${phone}/messages`);
             setMessages(res.data);
         } catch (err) { console.error(err); }
     };
@@ -191,7 +191,7 @@ export default function ReceptionistDashboard() {
                                             )}
                                         </div>
                                         <div className="min-w-0 flex-1">
-                                            <p className="font-semibold text-sm text-slate-800 dark:text-white truncate">{chat.phone}</p>
+                                            <p className="font-semibold text-sm text-slate-800 dark:text-white truncate">{chat.patient_name || chat.phone}</p>
                                             <p className="text-xs text-slate-400 truncate">{chat.last_message}</p>
                                         </div>
                                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${chat.is_bot_active ? 'bg-green-500/20 text-green-400' : 'bg-slate-200 dark:bg-slate-700 text-slate-400'}`}>
@@ -223,7 +223,7 @@ export default function ReceptionistDashboard() {
                                             <MessageSquare size={16} className="text-green-500" />
                                         </div>
                                         <div>
-                                            <p className="font-bold text-slate-800 dark:text-white text-sm">{selectedChat.phone}</p>
+                                            <p className="font-bold text-slate-800 dark:text-white text-sm">{selectedChat.patient_name || selectedChat.phone}</p>
                                             <p className="text-xs text-slate-400">WhatsApp</p>
                                         </div>
                                     </div>

@@ -7,7 +7,7 @@ import {
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import ProfileView from '../components/ProfileView';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+const API_URL = '';
 
 export default function DoctorDashboard() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));
@@ -30,7 +30,7 @@ export default function DoctorDashboard() {
         try {
             const res = await axios.get(`${API_URL}/api/appointments`);
             // Filter to this doctor's appointments
-            const mine = res.data.filter(a => a.doctor_id === user.reference_id);
+            const mine = Array.isArray(res.data) ? res.data.filter(a => a.doctor_id === user.reference_id) : [];
             setAppointments(mine);
         } catch (err) {
             console.error(err);
@@ -39,11 +39,11 @@ export default function DoctorDashboard() {
         }
     };
 
-    const todayAppts = appointments.filter(a => a.start_datetime?.startsWith(selectedDate));
+    const todayAppts = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime?.startsWith(selectedDate)) : [];
     const todayStr = new Date().toISOString().split('T')[0];
-    const todayCount = appointments.filter(a => a.start_datetime?.startsWith(todayStr)).length;
-    const pendingCount = appointments.filter(a => a.status === 'BOOKED').length;
-    const completedCount = appointments.filter(a => a.status === 'COMPLETED').length;
+    const todayCount = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime?.startsWith(todayStr)).length : 0;
+    const pendingCount = Array.isArray(appointments) ? appointments.filter(a => a.status === 'BOOKED').length : 0;
+    const completedCount = Array.isArray(appointments) ? appointments.filter(a => a.status === 'COMPLETED').length : 0;
 
     const statusColors = {
         BOOKED: 'bg-blue-500/20 text-blue-400 border-blue-500/30',

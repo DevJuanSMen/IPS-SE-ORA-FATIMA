@@ -249,6 +249,7 @@ const authMiddleware = require('./middleware/authMiddleware');
 app.use('/api/services', authMiddleware(), require('./modules/services/serviceRoutes'));
 app.use('/api/specialties', authMiddleware(), require('./modules/specialties/specialtyRoutes'));
 app.use('/api/doctors', authMiddleware(), require('./modules/doctors/doctorRoutes'));
+app.use('/api/entities', authMiddleware(), require('./modules/entities/entityRoutes'));
 
 // Inject client into appointment routes
 app.use('/api/appointments', authMiddleware(), require('./modules/appointments/appointmentRoutes')(client));

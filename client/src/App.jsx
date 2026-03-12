@@ -64,8 +64,8 @@ import LogoImage from '../assets/Diseño sin título (9).png';
 // Import Profile Component
 import ProfileView from './components/ProfileView';
 
-const API_URL = "/api";
-const socket = io("https://portal.ipsnuestrasenoradefatima.com");
+const API_URL = "";
+const socket = io("/");
 
 function App() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || {});
@@ -108,6 +108,9 @@ function App() {
     const [currentSpecialty, setCurrentSpecialty] = useState(null);
     const [showDoctorModal, setShowDoctorModal] = useState(false);
     const [currentDoctor, setCurrentDoctor] = useState(null);
+    const [entities, setEntities] = useState([]);
+    const [showEntityModal, setShowEntityModal] = useState(false);
+    const [currentEntity, setCurrentEntity] = useState(null);
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [doctorSchedules, setDoctorSchedules] = useState([]);
     const [showBlockModal, setShowBlockModal] = useState(false);
@@ -192,9 +195,9 @@ function App() {
     // Theme State
     const [theme, setTheme] = useState(() => {
         if (typeof window !== 'undefined') {
-            return localStorage.getItem('theme') || 'dark';
+            return localStorage.getItem('theme') || 'light';
         }
-        return 'dark';
+        return 'light';
     });
 
     useEffect(() => {
@@ -295,14 +298,26 @@ function App() {
         fetchAppointments();
         fetchCatalogs();
         fetchPatients();
+        fetchEntities();
     };
 
     const fetchCatalogs = async () => {
         try {
             const res = await axios.get(`${API_URL}/api/catalog`);
-            setCatalogs(res.data);
+            setCatalogs(res.data || { Ecografias: [], Radiografias: [] });
         } catch (err) {
             console.error('Error fetching catalogs:', err);
+            setCatalogs({ Ecografias: [], Radiografias: [] });
+        }
+    };
+
+    const fetchEntities = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/api/entities`);
+            setEntities(Array.isArray(res.data) ? res.data : []);
+        } catch (err) {
+            console.error('Error fetching entities:', err);
+            setEntities([]);
         }
     };
 
@@ -311,21 +326,26 @@ function App() {
         try {
             const params = { params: { from, to } };
             const [summary, bySpec, byDoc, byServ, byEnt, trends] = await Promise.all([
-                axios.get(`${API_URL}/api/reports/summary`, params),
-                axios.get(`${API_URL}/api/reports/by-specialty`, params),
-                axios.get(`${API_URL}/api/reports/by-doctor`, params),
-                axios.get(`${API_URL}/api/reports/by-service`, params),
-                axios.get(`${API_URL}/api/reports/by-entity`, params),
-                axios.get(`${API_URL}/api/reports/trends`)
+                axios.get(`${API_URL}/api/reports/summary`, params).catch(() => ({ data: {} })),
+                axios.get(`${API_URL}/api/reports/by-specialty`, params).catch(() => ({ data: [] })),
+                axios.get(`${API_URL}/api/reports/by-doctor`, params).catch(() => ({ data: [] })),
+                axios.get(`${API_URL}/api/reports/by-service`, params).catch(() => ({ data: [] })),
+                axios.get(`${API_URL}/api/reports/by-entity`, params).catch(() => ({ data: [] })),
+                axios.get(`${API_URL}/api/reports/trends`).catch(() => ({ data: [] }))
             ]);
-            setReportSummary(summary.data);
-            setReportBySpecialty(bySpec.data);
-            setReportByDoctor(byDoc.data);
-            setReportByService(byServ.data);
-            setReportByEntity(byEnt.data);
-            setReportTrends(trends.data);
+            setReportSummary(summary.data || {});
+            setReportBySpecialty(Array.isArray(bySpec.data) ? bySpec.data : []);
+            setReportByDoctor(Array.isArray(byDoc.data) ? byDoc.data : []);
+            setReportByService(Array.isArray(byServ.data) ? byServ.data : []);
+            setReportByEntity(Array.isArray(byEnt.data) ? byEnt.data : []);
+            setReportTrends(Array.isArray(trends.data) ? trends.data : []);
         } catch (err) {
             console.error('Error fetching reports:', err);
+            setReportBySpecialty([]);
+            setReportByDoctor([]);
+            setReportByService([]);
+            setReportByEntity([]);
+            setReportTrends([]);
         }
         setReportLoading(false);
     };
@@ -341,8 +361,11 @@ function App() {
         try {
             const token = localStorage.getItem('token');
             const res = await axios.get(`${API_URL}/api/auth/users`, { headers: { Authorization: `Bearer ${token}` } });
-            setUsersList(res.data);
-        } catch (err) { console.error('Error fetching users:', err); }
+            setUsersList(Array.isArray(res.data) ? res.data : []);
+        } catch (err) { 
+            console.error('Error fetching users:', err);
+            setUsersList([]);
+        }
     };
 
     const handleSaveUser = async (e) => {
@@ -392,18 +415,25 @@ function App() {
         try {
             const token = localStorage.getItem('token');
             const res = await axios.get(`${API_URL}/api/chatbot/faqs/all`, { headers: { Authorization: `Bearer ${token}` } });
-            setFaqs(res.data);
-        } catch (err) { console.error('Error fetching FAQs:', err); }
+            setFaqs(Array.isArray(res.data) ? res.data : []);
+        } catch (err) { 
+            console.error('Error fetching FAQs:', err);
+            setFaqs([]);
+        }
     };
 
     const fetchInboxMessages = async () => {
         try {
             const token = localStorage.getItem('token');
             const res = await axios.get(`${API_URL}/api/chatbot/messages`, { headers: { Authorization: `Bearer ${token}` } });
-            setInboxMessages(res.data);
-            const pendingCount = res.data.filter(m => m.status === 'PENDING').length;
+            const safeData = Array.isArray(res.data) ? res.data : [];
+            setInboxMessages(safeData);
+            const pendingCount = safeData.filter(m => m.status === 'PENDING').length;
             setUnreadSuggestions(pendingCount);
-        } catch (err) { console.error('Error fetching inbox:', err); }
+        } catch (err) { 
+            console.error('Error fetching inbox:', err);
+            setInboxMessages([]);
+        }
     };
 
     const fetchPendingCount = async () => {
@@ -508,9 +538,10 @@ function App() {
         try {
             const token = localStorage.getItem('token');
             const res = await axios.get(`${API_URL}/api/services`, { headers: { Authorization: `Bearer ${token}` } });
-            setServices(res.data);
+            setServices(Array.isArray(res.data) ? res.data : []);
         } catch (error) {
             console.error('Error fetching services', error);
+            setServices([]);
         }
     };
 
@@ -518,9 +549,10 @@ function App() {
         setLoading(true);
         try {
             const res = await axios.get(`${API_URL}/api/specialties`);
-            setSpecialties(res.data);
+            setSpecialties(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Error fetching specialties:', err);
+            setSpecialties([]);
         } finally {
             setLoading(false);
         }
@@ -530,9 +562,10 @@ function App() {
         setLoading(true);
         try {
             const res = await axios.get(`${API_URL}/api/doctors`);
-            setDoctors(res.data);
+            setDoctors(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Error fetching doctors:', err);
+            setDoctors([]);
         } finally {
             setLoading(false);
         }
@@ -542,9 +575,10 @@ function App() {
         setLoading(true);
         try {
             const res = await axios.get(`${API_URL}/api/appointments`);
-            setAppointments(res.data);
+            setAppointments(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Error fetching appointments:', err);
+            setAppointments([]);
         } finally {
             setLoading(false);
         }
@@ -556,9 +590,10 @@ function App() {
             const res = await axios.get(`${API_URL}/api/patients`, {
                 params: { search: query }
             });
-            setPatients(res.data);
+            setPatients(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Error fetching patients:', err);
+            setPatients([]);
         } finally {
             setPatientsLoading(false);
         }
@@ -566,7 +601,7 @@ function App() {
 
     // Dashboard Derived Data
     const today = new Date().toISOString().split('T')[0];
-    const todaysAppointments = appointments.filter(a => a.start_datetime.startsWith(today));
+    const todaysAppointments = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime && a.start_datetime.startsWith(today)) : [];
 
     // Simple Chart Data (Last 7 days)
     const getLast7Days = () => {
@@ -576,7 +611,7 @@ function App() {
             d.setDate(d.getDate() - i);
             const dateStr = d.toISOString().split('T')[0];
             const shortName = d.toLocaleDateString('es-ES', { weekday: 'short' });
-            const count = appointments.filter(a => a.start_datetime.startsWith(dateStr)).length;
+            const count = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime && a.start_datetime.startsWith(dateStr)).length : 0;
             days.push({ day: shortName, count, date: dateStr });
         }
         return days;
@@ -587,18 +622,20 @@ function App() {
     const fetchChats = async () => {
         try {
             const res = await axios.get(`${API_URL}/api/chats`);
-            setChats(res.data);
+            setChats(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Error fetching chats:', err);
+            setChats([]);
         }
     };
 
     const fetchMessages = async (phone) => {
         try {
             const res = await axios.get(`${API_URL}/api/chats/${phone}/messages`);
-            setMessages(res.data);
+            setMessages(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Error fetching messages:', err);
+            setMessages([]);
         }
     };
 
@@ -620,7 +657,7 @@ function App() {
         // Days of current month
         for (let i = 1; i <= daysInMonth; i++) {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-            const dayApts = appointments.filter(a => a.start_datetime.startsWith(dateStr));
+            const dayApts = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime && a.start_datetime.startsWith(dateStr)) : [];
             days.push({ day: i, date: dateStr, appointments: dayApts });
         }
         return days;
@@ -724,9 +761,11 @@ function App() {
     const handleSaveDoctor = async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
+        const selectedSpecialties = formData.getAll('specialty_ids');
+        
         const data = {
             full_name: formData.get('full_name'),
-            specialty_id: formData.get('specialty_id'),
+            specialty_ids: selectedSpecialties, // Enviar array de IDs
             phone: formData.get('phone'),
             is_active: true
         };
@@ -811,7 +850,36 @@ function App() {
         }
     };
 
+    const handleSaveEntity = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = {
+            name: formData.get('name'),
+            is_active: true
+        };
 
+        try {
+            if (currentEntity) {
+                await axios.put(`${API_URL}/api/entities/${currentEntity.id}`, data);
+            } else {
+                await axios.post(`${API_URL}/api/entities`, data);
+            }
+            setShowEntityModal(false);
+            fetchEntities();
+        } catch (err) {
+            alert('Error al guardar entidad: ' + err.message);
+        }
+    };
+
+    const handleToggleEntityStatus = async (entity) => {
+        if (!confirm(`¿${entity.is_active ? 'Desactivar' : 'Activar'} la entidad ${entity.name}?`)) return;
+        try {
+            await axios.put(`${API_URL}/api/entities/${entity.id}`, { ...entity, is_active: !entity.is_active });
+            fetchEntities();
+        } catch (err) {
+            alert('Error al cambiar estado: ' + err.message);
+        }
+    };
 
     const handlePatientLookup = async (phone) => {
         if (phone.length < 7) return;
@@ -840,35 +908,38 @@ function App() {
         }
     };
 
-    const fetchAvailability = async (doctorId, date) => {
+    const fetchAvailability = async (doctorId, date, specId = null) => {
         try {
-            // Find specialty_id from doctor
             const doctor = doctors.find(d => d.id === doctorId);
             if (!doctor) return;
 
             setLoading(true);
+            const specialtyId = specId || doctor.specialty_id || (doctor.specialty_ids && doctor.specialty_ids[0]);
+            
             const res = await axios.get(`${API_URL}/api/appointments/availability`, {
-                params: { specialtyId: doctor.specialty_id, date }
+                params: { specialtyId, date }
             });
-            // Result is array of { doctorId, doctorName, slots: [] }
-            // Since we asked for specific doctor, we expect one entry or empty
-            const data = res.data.find(d => d.doctorId === doctorId);
-            setAvailableSlots(data ? data.slots : []);
+            const data = Array.isArray(res.data) ? res.data.find(d => d.doctorId === doctorId) : null;
+            setAvailableSlots(data && Array.isArray(data.slots) ? data.slots : []);
         } catch (err) {
             console.error(err);
+            setAvailableSlots([]);
         }
         setLoading(false);
     };
 
-    const fetchBookingSlots = async (doctorId, date) => {
+    const fetchBookingSlots = async (doctorId, date, specId = null) => {
         try {
             const doctor = doctors.find(d => d.id === doctorId);
             if (!doctor) return;
+
+            const specialtyId = specId || doctor.specialty_id || (doctor.specialty_ids && doctor.specialty_ids[0]);
+
             const res = await axios.get(`${API_URL}/api/appointments/availability`, {
-                params: { specialtyId: doctor.specialty_id, date }
+                params: { specialtyId, date }
             });
-            const data = res.data.find(d => d.doctorId === doctorId);
-            setBookingSlots(data ? data.slots : []);
+            const data = Array.isArray(res.data) ? res.data.find(d => d.doctorId === doctorId) : null;
+            setBookingSlots(data && Array.isArray(data.slots) ? data.slots : []);
         } catch (err) {
             console.error(err);
             setBookingSlots([]);
@@ -944,7 +1015,8 @@ function App() {
                 const pRes = await axios.post(`${API_URL}/api/patients`, {
                     full_name: bookingData.full_name,
                     phone: bookingData.phone,
-                    document_id: bookingData.document_id
+                    document_id: bookingData.document_id,
+                    birth_date: bookingData.birth_date
                 });
                 patientId = pRes.data.id;
             }
@@ -1158,13 +1230,14 @@ function App() {
                     <SidebarItem id="users" icon={Shield} label="Empleados" />
                     <SidebarItem id="chat" icon={MessageSquare} label="Atención al cliente" />
                     <div className="relative">
-                        {chats.some(c => c.advisor_requested) && (
+                        {Array.isArray(chats) && chats.some(c => c.advisor_requested) && (
                             <span className="absolute top-2 right-4 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse shadow-lg shadow-red-500/50"></span>
                         )}
                     </div>
 
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">SERVICIOS MÉDICOS</div>
                     <SidebarItem id="specialties" icon={LayoutDashboard} label="Gestión de Servicios" />
+                    <SidebarItem id="entities" icon={Building2} label="Gestión de EPS" />
                     <SidebarItem id="reports" icon={BarChart2} label="Reportes" />
 
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">TURNOS</div>
@@ -1844,7 +1917,7 @@ function App() {
                                                     >
                                                         <div className="flex justify-between items-start">
                                                             <span className="font-bold text-slate-900 dark:text-white truncate w-full pr-2 flex items-center gap-2">
-                                                                {chat.patient_name || chat.phone}
+                                                                {chat.patient_name || chat.phone.split('@')[0]}
                                                                 {chat.advisor_requested && (
                                                                     <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]" title="Solicitud de Asesor"></span>
                                                                 )}
@@ -1891,10 +1964,20 @@ function App() {
                                                             {selectedChat.patient_name || 'Paciente'}
                                                             {selectedChat.advisor_requested && <span className="text-[10px] bg-red-500/20 text-red-500 dark:text-red-400 px-2 py-0.5 rounded-full border border-red-500/50">Solicita Asesor</span>}
                                                         </h4>
-                                                        <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">{selectedChat.phone}</p>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">{selectedChat.phone.split('@')[0]}</p>
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-4">
+                                                    <button
+                                                        onClick={() => {
+                                                            setPatientSearch(selectedChat.phone.split('@')[0]);
+                                                            setActiveTab('patients');
+                                                        }}
+                                                        className="text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/40 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors flex items-center gap-2"
+                                                        title="Ver perfil completo del paciente"
+                                                    >
+                                                        <Eye size={14} /> Ver Ficha
+                                                    </button>
                                                     <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
                                                         <span className={`text-[10px] font-bold ${selectedChat.is_bot_active ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
                                                             BOT: {selectedChat.is_bot_active ? 'ON' : 'OFF'}
@@ -1989,10 +2072,12 @@ function App() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                            {doctors.map((d) => (
+                                            {Array.isArray(doctors) && doctors.map((d) => (
                                                 <tr key={d.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!d.is_active ? 'opacity-50' : ''}`}>
                                                     <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{d.full_name} {d.is_active ? '' : '(Inactivo)'}</td>
-                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{d.specialty_name}</td>
+                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                                        {d.specialties_list ? d.specialties_list : d.specialty_name}
+                                                    </td>
                                                     <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{d.phone}</td>
                                                     <td className="px-6 py-4 flex gap-4">
                                                         <button onClick={() => { setCurrentDoctor(d); setShowDoctorModal(true); }} className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300" title="Editar Médico"><Edit size={18} /></button>
@@ -2143,6 +2228,57 @@ function App() {
                                         </div>
                                     </>
                                 )}
+                            </div>
+                        )
+                    }
+                    {
+                        activeTab === 'entities' && (
+                            <div className="space-y-6">
+                                <header className="flex justify-between items-center">
+                                    <div>
+                                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Gestión de EPS (Entidades)</h2>
+                                        <p className="text-slate-500 dark:text-slate-400 text-sm">Activa o desactiva las entidades que el Bot debe reconocer.</p>
+                                    </div>
+                                    <button
+                                        onClick={() => { setCurrentEntity(null); setShowEntityModal(true); }}
+                                        className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg"
+                                    >
+                                        <Plus size={20} /> Nueva EPS
+                                    </button>
+                                </header>
+
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xl">
+                                    <table className="w-full text-left">
+                                        <thead>
+                                            <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+                                                <th className="px-6 py-4">Nombre de la Entidad</th>
+                                                <th className="px-6 py-4">Estado</th>
+                                                <th className="px-6 py-4 text-right pr-6">Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                            {entities.map((ent) => (
+                                                <tr key={ent.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!ent.is_active ? 'opacity-50' : ''}`}>
+                                                    <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white uppercase">{ent.name}</td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`px-3 py-1 rounded inline-flex items-center gap-1 text-xs border ${ent.is_active ? 'border-green-500 text-green-500' : 'border-red-500 text-red-500'}`}>
+                                                            {ent.is_active ? 'Activa' : 'Inactiva'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 flex gap-2 justify-end">
+                                                        <button onClick={() => { setCurrentEntity(ent); setShowEntityModal(true); }} className="text-blue-500 hover:text-blue-600 border border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-1 rounded text-sm flex items-center gap-1 transition-colors"><Edit size={14} /> Editar</button>
+                                                        <button onClick={() => handleToggleEntityStatus(ent)} className={`px-3 py-1 border rounded text-sm flex items-center gap-1 transition-colors ${ent.is_active ? 'text-red-500 border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-green-500 border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`} title={ent.is_active ? "Desactivar" : "Activar"}><Power size={14} /> {ent.is_active ? "Desactivar" : "Activar"}</button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {entities.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="3" className="px-6 py-10 text-center text-slate-500 italic">No hay entidades registradas.</td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         )
                     }
@@ -2637,6 +2773,27 @@ function App() {
                 )
             }
 
+            {/* Entity (EPS) Modal */}
+            {
+                showEntityModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                        <form onSubmit={handleSaveEntity} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-md shadow-2xl space-y-6">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">{currentEntity ? 'Editar' : 'Nueva'} Entidad (EPS)</h3>
+                                <button type="button" onClick={() => setShowEntityModal(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Nombre de la Entidad / EPS</label>
+                                    <input name="name" defaultValue={currentEntity?.name} required placeholder="Ej. EPS SANITAS" className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95">Guardar Entidad</button>
+                        </form>
+                    </div>
+                )
+            }
+
             {/* Availability Modal */}
             {
                 showAvailabilityModal && (
@@ -2745,6 +2902,18 @@ function App() {
                                                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400"
                                                 />
                                             </div>
+                                            {bookingData.is_new_patient && (
+                                                <div className="col-span-2 flex flex-col gap-2 animate-in slide-in-from-top-2 duration-300">
+                                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Fecha de Nacimiento</label>
+                                                    <input
+                                                        type="date"
+                                                        value={bookingData.birth_date || ''}
+                                                        onChange={(e) => setBookingData({ ...bookingData, birth_date: e.target.value })}
+                                                        required
+                                                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white dark:[color-scheme:dark]"
+                                                    />
+                                                </div>
+                                            )}
                                             <div className="col-span-2 flex flex-col gap-2">
                                                 <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Nombre Completo</label>
                                                 <input
@@ -2778,8 +2947,9 @@ function App() {
                                                     <option value="PARTICULAR">Atención Particular (Pago en Sede)</option>
                                                     <option value="ARL">ARL</option>
                                                     <option value="SOAT">SOAT</option>
-                                                    <option value="ALIANZA SALUD">E.P.S Alianza Salud</option>
-                                                    <option value="COMPENSAR">E.P.S Compensar</option>
+                                                    {entities.filter(ent => ent.is_active).map(ent => (
+                                                        <option key={ent.id} value={ent.name.toUpperCase()}>{ent.name}</option>
+                                                    ))}
                                                     <option value="MEDICINA PREPAGADA">Medicina Prepagada</option>
                                                 </select>
                                             </div>
@@ -2930,7 +3100,7 @@ function App() {
                                                 >
                                                     <option value="">Seleccionar...</option>
                                                     {doctors
-                                                        .filter(d => !bookingData.specialty_id || d.specialty_id === bookingData.specialty_id)
+                                                        .filter(d => !bookingData.specialty_id || d.specialty_ids?.includes(bookingData.specialty_id) || d.specialty_id === bookingData.specialty_id)
                                                         .map(d => <option key={d.id} value={d.id}>{d.full_name}</option>)
                                                     }
                                                 </select>
@@ -2946,7 +3116,7 @@ function App() {
                                                             setBookingDate(e.target.value);
                                                             setBookingData({ ...bookingData, start_datetime: '' });
                                                             if (e.target.value && bookingData.doctor_id) {
-                                                                fetchBookingSlots(bookingData.doctor_id, e.target.value);
+                                                                fetchBookingSlots(bookingData.doctor_id, e.target.value, bookingData.specialty_id);
                                                             } else {
                                                                 setBookingSlots([]);
                                                             }
@@ -3026,7 +3196,7 @@ function App() {
             {
                 showDoctorModal && (
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-                        <form onSubmit={handleSaveDoctor} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-md shadow-2xl space-y-6">
+                        <form onSubmit={handleSaveDoctor} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-8 rounded-2xl w-full max-w-lg shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto custom-scrollbar">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-2xl font-bold text-slate-900 dark:text-white">{currentDoctor ? 'Editar' : 'Nuevo'} Médico</h3>
                                 <button type="button" onClick={() => setShowDoctorModal(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X /></button>
@@ -3037,11 +3207,21 @@ function App() {
                                     <input name="full_name" defaultValue={currentDoctor?.full_name} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
                                 </div>
                                 <div className="flex flex-col gap-2">
-                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Especialidad</label>
-                                    <select name="specialty_id" defaultValue={currentDoctor?.specialty_id} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-white">
-                                        <option value="">Seleccionar...</option>
-                                        {specialties.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                    </select>
+                                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Especialidades (Puede seleccionar varias)</label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-700 max-h-48 overflow-y-auto custom-scrollbar">
+                                        {specialties.map(s => (
+                                            <label key={s.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded-lg transition-colors">
+                                                <input
+                                                    type="checkbox"
+                                                    name="specialty_ids"
+                                                    value={s.id}
+                                                    defaultChecked={currentDoctor?.specialty_ids?.includes(s.id) || currentDoctor?.specialty_id === s.id}
+                                                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                />
+                                                <span className="text-sm text-slate-700 dark:text-slate-300">{s.name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
                                 <div className="flex flex-col gap-2">
                                     <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Teléfono</label>

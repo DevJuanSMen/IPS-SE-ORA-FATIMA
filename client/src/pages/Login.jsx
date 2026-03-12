@@ -5,7 +5,7 @@ import { Lock, User, Eye, EyeOff, X, Mail, Phone, CreditCard, ChevronDown } from
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import { getRoleHome } from '../AppRouter';
 
-const API_URL = '/api';
+const API_URL = '';
 
 const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const genders = ['Masculino', 'Femenino', 'Otro'];

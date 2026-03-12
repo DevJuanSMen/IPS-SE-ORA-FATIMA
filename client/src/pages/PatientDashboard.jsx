@@ -7,7 +7,7 @@ import {
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import ProfileView from '../components/ProfileView';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+const API_URL = '';
 
 export default function PatientDashboard() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));
@@ -65,7 +65,7 @@ export default function PatientDashboard() {
     const fetchAppointments = async () => {
         try {
             const res = await axios.get(`${API_URL}/api/appointments`);
-            const mine = res.data.filter(a => a.patient_id === user.reference_id);
+            const mine = Array.isArray(res.data) ? res.data.filter(a => a.patient_id === user.reference_id) : [];
             setAppointments(mine);
         } catch (err) { console.error(err); }
     };
@@ -581,7 +581,7 @@ export default function PatientDashboard() {
                                         className="w-full px-3 py-2.5 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-white outline-none"
                                     >
                                         <option value="">Selecciona un médico...</option>
-                                        {doctors.filter(d => d.specialty_id === bookingData.specialty_id).map(d => (
+                                        {doctors.filter(d => !bookingData.specialty_id || d.specialty_ids?.includes(bookingData.specialty_id) || d.specialty_id === bookingData.specialty_id).map(d => (
                                             <option key={d.id} value={d.id}>{d.full_name}</option>
                                         ))}
                                     </select>

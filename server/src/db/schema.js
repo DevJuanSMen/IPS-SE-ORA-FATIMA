@@ -34,14 +34,18 @@ const createTables = async () => {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS doctors (
+    CREATE TABLE IF NOT EXISTS entities (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      full_name VARCHAR(255) NOT NULL,
-      specialty_id UUID REFERENCES specialties(id),
-      phone VARCHAR(20),
+      name VARCHAR(100) UNIQUE NOT NULL,
       is_active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS doctor_specialties (
+      doctor_id UUID REFERENCES doctors(id) ON DELETE CASCADE,
+      specialty_id UUID REFERENCES specialties(id) ON DELETE CASCADE,
+      PRIMARY KEY (doctor_id, specialty_id)
     );
 
     CREATE TABLE IF NOT EXISTS patients (
@@ -49,6 +53,8 @@ const createTables = async () => {
       full_name VARCHAR(255) NOT NULL,
       document_id VARCHAR(50),
       phone VARCHAR(20) UNIQUE NOT NULL,
+      gender VARCHAR(20),
+      birth_date DATE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -153,6 +159,14 @@ const createTables = async () => {
         ALTER TABLE users ADD COLUMN avatar_url TEXT; -- stores base64 encoded image
       END IF;
 
+      -- Add gender and birth_date to patients if they don't exist
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='patients' AND column_name='gender') THEN
+        ALTER TABLE patients ADD COLUMN gender VARCHAR(20);
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='patients' AND column_name='birth_date') THEN
+        ALTER TABLE patients ADD COLUMN birth_date DATE;
+      END IF;
+
     END $$;
 
     -- New tables for multi-role features
@@ -221,6 +235,16 @@ const createTables = async () => {
         IF v_medicina_especializada_id IS NOT NULL THEN
             UPDATE specialties SET service_id = v_medicina_especializada_id WHERE service_id IS NULL;
         END IF;
+
+        -- Seed initial entities (EPS)
+        INSERT INTO entities (name) VALUES 
+            ('PARTICULAR'),
+            ('ARL'),
+            ('SOAT'),
+            ('ALIANZA SALUD'),
+            ('COMPENSAR'),
+            ('MEDICINA PREPAGADA')
+        ON CONFLICT (name) DO NOTHING;
 
     END $$;
   `;
