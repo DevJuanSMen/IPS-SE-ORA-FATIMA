@@ -16,6 +16,8 @@ export default function DoctorDashboard() {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
     const [showProfile, setShowProfile] = useState(false);
+    const [view, setView] = useState('agenda'); // 'agenda' | 'history'
+    const [historySearch, setHistorySearch] = useState('');
 
     useEffect(() => {
         document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -111,68 +113,151 @@ export default function DoctorDashboard() {
                             </p>
                         </div>
 
-                        {/* Stats */}
-                        <div className="grid grid-cols-3 gap-4 mb-6">
-                            {[
-                                { label: 'Citas Hoy', value: todayCount, icon: Calendar, color: '#446DF5', bg: 'rgba(68,109,245,0.12)' },
-                                { label: 'Pendientes', value: pendingCount, icon: Clock, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-                                { label: 'Completadas', value: completedCount, icon: CheckCircle, color: '#22d3ee', bg: 'rgba(34,211,238,0.12)' },
-                            ].map(({ label, value, icon: Icon, color, bg }) => (
-                                <div key={label} className="rounded-2xl p-5 bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 shadow-sm">
-                                    <div className="flex items-start justify-between mb-3">
-                                        <div className="p-2.5 rounded-xl" style={{ background: bg }}>
-                                            <Icon size={20} style={{ color }} />
-                                        </div>
-                                    </div>
-                                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{value}</p>
-                                    <p className="text-slate-500 dark:text-slate-400 text-sm">{label}</p>
-                                </div>
-                            ))}
+                        {/* Tabs */}
+                        <div className="flex gap-1 mb-6 bg-white dark:bg-slate-800/50 rounded-xl p-1 border border-slate-200 dark:border-slate-700/50 w-fit shadow-sm">
+                            <button onClick={() => setView('agenda')}
+                                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${view === 'agenda' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'}`}>
+                                Agenda de Hoy
+                            </button>
+                            <button onClick={() => setView('history')}
+                                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${view === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'}`}>
+                                Historial de Citas
+                            </button>
                         </div>
 
-                        {/* Appointments for selected date */}
-                        <div className="bg-white dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/50 shadow-sm overflow-hidden">
-                            <div className="p-5 border-b border-slate-200 dark:border-slate-700/50 flex flex-wrap items-center justify-between gap-3">
-                                <h3 className="font-bold text-slate-900 dark:text-white text-lg flex items-center gap-2">
-                                    <Calendar size={20} className="text-blue-500" /> Mis Citas
-                                </h3>
-                                <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
-                                    className="px-3 py-2 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-white outline-none" />
-                            </div>
-                            <div className="divide-y divide-slate-200 dark:divide-slate-700/50">
-                                {loading ? (
-                                    <div className="p-8 text-center text-slate-400">
-                                        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-3" />
-                                        Cargando...
-                                    </div>
-                                ) : todayAppts.length === 0 ? (
-                                    <div className="p-8 text-center text-slate-400">
-                                        <Calendar size={40} className="mx-auto mb-2 opacity-30" />
-                                        <p>No hay citas para esta fecha</p>
-                                    </div>
-                                ) : (
-                                    todayAppts.map(apt => (
-                                        <div key={apt.id} className="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-white/3 transition-colors">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
-                                                    <User size={16} className="text-blue-400" />
-                                                </div>
-                                                <div>
-                                                    <p className="font-semibold text-slate-800 dark:text-white text-sm">{apt.patient_name}</p>
-                                                    <p className="text-xs text-slate-400">
-                                                        {new Date(apt.start_datetime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' })}
-                                                        {apt.specialty_name && ` · ${apt.specialty_name}`}
-                                                    </p>
+                        {/* Conditional View */}
+                        {view === 'agenda' ? (
+                            <>
+                                {/* Stats */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                                    {[
+                                        { label: 'Citas Hoy', value: todayCount, icon: Calendar, color: '#446DF5', bg: 'rgba(68,109,245,0.12)' },
+                                        { label: 'Pendientes', value: pendingCount, icon: Clock, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+                                        { label: 'Completadas', value: completedCount, icon: CheckCircle, color: '#22d3ee', bg: 'rgba(34,211,238,0.12)' },
+                                    ].map(({ label, value, icon: Icon, color, bg }) => (
+                                        <div key={label} className="rounded-2xl p-5 bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                                            <div className="flex items-start justify-between mb-3">
+                                                <div className="p-2.5 rounded-xl" style={{ background: bg }}>
+                                                    <Icon size={20} style={{ color }} />
                                                 </div>
                                             </div>
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors[apt.status] || 'bg-slate-200 text-slate-600'}`}>
-                                                {statusLabels[apt.status] || apt.status}
-                                            </span>
+                                            <p className="text-3xl font-bold text-slate-900 dark:text-white">{value}</p>
+                                            <p className="text-slate-500 dark:text-slate-400 text-sm">{label}</p>
                                         </div>
-                                    ))
-                                )}
+                                    ))}
+                                </div>
+
+                                {/* Appointments for selected date */}
+                                <div className="bg-white dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/50 shadow-sm overflow-hidden">
+                                    <div className="p-5 border-b border-slate-200 dark:border-slate-700/50 flex flex-wrap items-center justify-between gap-3">
+                                        <h3 className="font-bold text-slate-900 dark:text-white text-lg flex items-center gap-2">
+                                            <Calendar size={20} className="text-blue-500" /> Mis Citas
+                                        </h3>
+                                        <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+                                            className="px-3 py-2 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-white outline-none" />
+                                    </div>
+                                    <div className="divide-y divide-slate-200 dark:divide-slate-700/50">
+                                        {loading ? (
+                                            <div className="p-8 text-center text-slate-400">
+                                                <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-3" />
+                                                Cargando...
+                                            </div>
+                                        ) : todayAppts.length === 0 ? (
+                                            <div className="p-8 text-center text-slate-400">
+                                                <Calendar size={40} className="mx-auto mb-2 opacity-30" />
+                                                <p>No hay citas para esta fecha</p>
+                                            </div>
+                                        ) : (
+                                            todayAppts.map(apt => (
+                                                <div key={apt.id} className="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-white/3 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                                            <User size={16} className="text-blue-400" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-semibold text-slate-800 dark:text-white text-sm">{apt.patient_name}</p>
+                                                            <p className="text-xs text-slate-400">
+                                                                {new Date(apt.start_datetime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' })}
+                                                                {apt.specialty_name && ` · ${apt.specialty_name}`}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors[apt.status] || 'bg-slate-200 text-slate-600'}`}>
+                                                        {statusLabels[apt.status] || apt.status}
+                                                    </span>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            /* History View */
+                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                <div className="bg-white dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/50 shadow-sm overflow-hidden">
+                                    <div className="p-5 border-b border-slate-200 dark:border-slate-700/50 flex flex-wrap items-center justify-between gap-3">
+                                        <h3 className="font-bold text-slate-900 dark:text-white text-lg">Historial Completo</h3>
+                                        <div className="relative">
+                                            <input
+                                                value={historySearch}
+                                                onChange={e => setHistorySearch(e.target.value)}
+                                                placeholder="Buscar por paciente..."
+                                                className="pl-4 pr-10 py-2 rounded-xl text-sm bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-white outline-none w-64 shadow-inner"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="bg-slate-50 dark:bg-white/5 text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider">
+                                                    <th className="px-6 py-4">Paciente</th>
+                                                    <th className="px-6 py-4">Fecha</th>
+                                                    <th className="px-6 py-4">Hora</th>
+                                                    <th className="px-6 py-4">Especialidad</th>
+                                                    <th className="px-6 py-4">Estado</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                                                {appointments
+                                                    .filter(a => a.patient_name?.toLowerCase().includes(historySearch.toLowerCase()))
+                                                    .sort((a, b) => new Date(b.start_datetime) - new Date(a.start_datetime))
+                                                    .map(apt => (
+                                                        <tr key={apt.id} className="hover:bg-slate-50 dark:hover:bg-white/3 transition-colors">
+                                                            <td className="px-6 py-4">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-500 font-bold text-xs">
+                                                                        {(apt.patient_name || 'P')[0].toUpperCase()}
+                                                                    </div>
+                                                                    <p className="text-sm font-semibold text-slate-800 dark:text-white">{apt.patient_name}</p>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                                                                {new Date(apt.start_datetime).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                            </td>
+                                                            <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                                                                {new Date(apt.start_datetime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                            </td>
+                                                            <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400">
+                                                                {apt.specialty_name}
+                                                            </td>
+                                                            <td className="px-6 py-4">
+                                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusColors[apt.status]}`}>
+                                                                    {statusLabels[apt.status] || apt.status}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {appointments.length === 0 && (
+                                        <div className="py-20 text-center text-slate-400">
+                                            <p>No se encontraron citas en el historial</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        </div>
+                        )}
                     </>
                 )}
             </main>

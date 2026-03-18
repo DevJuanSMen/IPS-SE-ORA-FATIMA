@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
                 },
                 '/socket.io': {
                     target: env.VITE_API_URL || 'http://localhost:3001',
+                    changeOrigin: true,
                     ws: true
                 }
             },

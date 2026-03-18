@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { User, Mail, Shield, Camera, Lock, Save } from 'lucide-react';
+import { User, Mail, Shield, Camera, Lock, Save, Bell, MessageSquare } from 'lucide-react';
 
 const API_URL = '';
 
@@ -9,6 +9,7 @@ export default function ProfileView({ user, onUpdateUser }) {
     const [email, setEmail] = useState(user.email || '');
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
+    const [notifyPersonal, setNotifyPersonal] = useState(user.notify_personal_phone !== false);
     const [loading, setLoading] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [msg, setMsg] = useState('');
@@ -19,8 +20,8 @@ export default function ProfileView({ user, onUpdateUser }) {
         setLoading(true);
         setMsg('');
         try {
-            const res = await axios.put(`${API_URL}/api/auth/me`, { full_name: name, email });
-            const updated = { ...user, full_name: name, email };
+            const res = await axios.put(`${API_URL}/api/auth/me`, { full_name: name, email, notify_personal_phone: notifyPersonal });
+            const updated = { ...user, full_name: name, email, notify_personal_phone: notifyPersonal };
             localStorage.setItem('user', JSON.stringify(updated));
             if (onUpdateUser) onUpdateUser(updated);
             setMsg('Perfil actualizado exitosamente.');
@@ -130,6 +131,25 @@ export default function ProfileView({ user, onUpdateUser }) {
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Correo Electrónico</label>
                                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none dark:text-white" />
+                            </div>
+
+                            <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dotted border-slate-300 dark:border-slate-700">
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-lg ${notifyPersonal ? 'bg-green-100 text-green-600 dark:bg-green-900/30' : 'bg-slate-200 text-slate-500 dark:bg-slate-800'}`}>
+                                        <Bell size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="font-bold text-slate-800 dark:text-white text-sm">Notificaciones de WhatsApp</p>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">Recibir recordatorios y confirmaciones en tu celular personal.</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setNotifyPersonal(!notifyPersonal)}
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${notifyPersonal ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notifyPersonal ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
                             </div>
                             <div className="pt-4 text-right">
                                 <button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 ml-auto shadow-lg shadow-blue-500/30 transition-all">

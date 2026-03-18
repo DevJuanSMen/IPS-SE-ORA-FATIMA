@@ -42,7 +42,8 @@ const login = async (req, res) => {
                 reference_id: user.reference_id,
                 full_name: user.full_name,
                 email: user.email,
-                avatar_url: user.avatar_url
+                avatar_url: user.avatar_url,
+                notify_personal_phone: user.notify_personal_phone
             }
         });
 
@@ -178,7 +179,7 @@ const toggleUserStatus = async (req, res) => {
 const getMe = async (req, res) => {
     try {
         const result = await db.query(
-            'SELECT id, username, role, full_name, email, avatar_url, reference_id, created_at FROM users WHERE id = $1',
+            'SELECT id, username, role, full_name, email, avatar_url, reference_id, notify_personal_phone, created_at FROM users WHERE id = $1',
             [req.user.id]
         );
         if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -190,11 +191,11 @@ const getMe = async (req, res) => {
 
 // Update my profile
 const updateMe = async (req, res) => {
-    const { full_name, email } = req.body;
+    const { full_name, email, notify_personal_phone } = req.body;
     try {
         const result = await db.query(
-            'UPDATE users SET full_name = $1, email = $2, updated_at = NOW() WHERE id = $3 RETURNING id, username, role, full_name, email, avatar_url',
-            [full_name, email, req.user.id]
+            'UPDATE users SET full_name = $1, email = $2, notify_personal_phone = $3, updated_at = NOW() WHERE id = $4 RETURNING id, username, role, full_name, email, avatar_url, notify_personal_phone',
+            [full_name, email, notify_personal_phone, req.user.id]
         );
         res.json(result.rows[0]);
     } catch (err) {

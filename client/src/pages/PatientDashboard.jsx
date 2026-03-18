@@ -24,6 +24,7 @@ export default function PatientDashboard() {
     const [unreadReplies, setUnreadReplies] = useState(0);
     const [viewingImage, setViewingImage] = useState(null);
     const [activeTab, setActiveTab] = useState('appointments');
+    const [appointmentsSubTab, setAppointmentsSubTab] = useState('upcoming'); // 'upcoming' | 'past'
 
     // Upload Results States
     const [uploadModal, setUploadModal] = useState(false);
@@ -288,37 +289,61 @@ export default function PatientDashboard() {
                 {/* Appointments Tab */}
                 {activeTab === 'appointments' && (
                     <div className="space-y-4">
-                        <div className="flex justify-end">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex gap-1 bg-slate-100 dark:bg-white/5 p-1 rounded-xl">
+                                <button onClick={() => setAppointmentsSubTab('upcoming')}
+                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${appointmentsSubTab === 'upcoming' ? 'bg-white dark:bg-blue-600 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                                    Próximas
+                                </button>
+                                <button onClick={() => setAppointmentsSubTab('past')}
+                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${appointmentsSubTab === 'past' ? 'bg-white dark:bg-blue-600 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                                    Pasadas
+                                </button>
+                            </div>
                             <button onClick={openBookingModal} className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm transition-colors shadow-sm">
                                 <Plus size={16} /> Nueva Cita
                             </button>
                         </div>
-                        {appointments.length === 0 ? (
-                            <div className="text-center py-12 bg-white dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700/50">
-                                <Calendar size={40} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
-                                <p className="text-slate-500 dark:text-slate-400">No tienes citas registradas</p>
-                            </div>
-                        ) : (
-                            appointments.map(apt => (
-                                <div key={apt.id} className="flex items-center justify-between p-4 bg-white dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/50 shadow-sm">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
-                                            <Calendar size={18} className="text-blue-400" />
-                                        </div>
-                                        <div>
-                                            <p className="font-semibold text-slate-800 dark:text-white text-sm">{apt.specialty_name || 'Consulta'}</p>
-                                            <p className="text-xs text-slate-400">
-                                                Dr. {apt.doctor_name} · {new Date(apt.start_datetime).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })}
-                                                {' '}at {new Date(apt.start_datetime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' })}
-                                            </p>
-                                        </div>
+
+                        {(() => {
+                            const filtered = appointmentsSubTab === 'upcoming'
+                                ? appointments.filter(a => new Date(a.start_datetime) >= new Date() && a.status !== 'CANCELLED')
+                                : appointments.filter(a => new Date(a.start_datetime) < new Date() || a.status === 'CANCELLED');
+
+                            if (filtered.length === 0) {
+                                return (
+                                    <div className="text-center py-12 bg-white dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700/50">
+                                        <Calendar size={40} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
+                                        <p className="text-slate-500 dark:text-slate-400">No hay citas {appointmentsSubTab === 'upcoming' ? 'programadas' : 'en el historial'}</p>
                                     </div>
-                                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors[apt.status] || 'bg-slate-200 text-slate-500'}`}>
-                                        {statusLabels[apt.status] || apt.status}
-                                    </span>
-                                </div>
-                            ))
-                        )}
+                                );
+                            }
+
+                            return filtered
+                                .sort((a, b) => appointmentsSubTab === 'upcoming'
+                                    ? new Date(a.start_datetime) - new Date(b.start_datetime)
+                                    : new Date(b.start_datetime) - new Date(a.start_datetime)
+                                )
+                                .map(apt => (
+                                    <div key={apt.id} className="flex items-center justify-between p-4 bg-white dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                                <Calendar size={18} className="text-blue-400" />
+                                            </div>
+                                            <div>
+                                                <p className="font-semibold text-slate-800 dark:text-white text-sm">{apt.specialty_name || 'Consulta'}</p>
+                                                <p className="text-xs text-slate-400">
+                                                    Dr. {apt.doctor_name} · {new Date(apt.start_datetime).toLocaleDateString('es-CO', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })}
+                                                    {' '}at {new Date(apt.start_datetime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' })}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors[apt.status] || 'bg-slate-200 text-slate-500'}`}>
+                                            {statusLabels[apt.status] || apt.status}
+                                        </span>
+                                    </div>
+                                ));
+                        })()}
                     </div>
                 )}
 

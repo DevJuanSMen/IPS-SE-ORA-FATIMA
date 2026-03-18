@@ -25,12 +25,26 @@ const WhatsAppController = {
         socketIo = io;
     },
 
+    formatPhoneNumber(phone) {
+        if (!phone) return phone;
+        // 1. Get only digits and remove @c.us etc
+        let num = String(phone).split('@')[0].replace(/\D/g, '');
+        
+        // 2. If it's a 10-digit number (standard Colombian format without country code), add '57'
+        if (num.length === 10) {
+            num = '57' + num;
+        }
+        
+        return num;
+    },
+
     // Helper to log messages
     async logMessage(phone, body, from_me) {
         try {
+            const cleanPhone = this.formatPhoneNumber(phone);
             await db.query(
                 'INSERT INTO messages (phone, body, from_me) VALUES ($1, $2, $3)',
-                [phone, body, from_me]
+                [cleanPhone, body, from_me]
             );
             if (socketIo) {
                 socketIo.emit('new_message', { phone, body, from_me });
@@ -48,32 +62,37 @@ const WhatsAppController = {
             console.log(`[BOT-DEBUG] Mensaje enviado a WhatsApp exitosamente.`);
         } catch (e) {
             console.error(`[BOT-DEBUG] Error fatal al hacer msg.reply:`, e);
-            throw e;
         }
-        const cleanPhone = msg.from.split('@')[0];
-        await this.logMessage(cleanPhone, text, true);
+        
+        try {
+            const cleanPhone = this.formatPhoneNumber(msg.from);
+            await this.logMessage(cleanPhone, text, true);
+        } catch (logErr) {
+            console.error('[BOT-DEBUG] Error registrando el log del bot:', logErr);
+        }
     },
 
-    // Send generic message (for Admin logic)
     async sendMessage(client, phone, text) {
         try {
-            const cleanPhone = String(phone).split('@')[0].trim();
-            let chatId = `${cleanPhone}@c.us`;
+            const cleanPhone = this.formatPhoneNumber(phone);
+            let chatId = cleanPhone.length > 13 ? `${cleanPhone}@lid` : `${cleanPhone}@c.us`;
+            
             try {
-                // To avoid "Cannot read properties of undefined (reading 'getChat')" errors
-                // We should ensure the number is valid and the client is ready
-                const numberDetails = await client.getNumberId(chatId);
-                if (numberDetails) {
-                    await client.sendMessage(numberDetails._serialized, text);
+                if (chatId.endsWith('@c.us')) {
+                    const numberDetails = await client.getNumberId(chatId);
+                    if (numberDetails) {
+                        await client.sendMessage(numberDetails._serialized, text);
+                    } else {
+                        console.log(`[AI-BOT] Number not registered for ${cleanPhone}, falling back to @lid`);
+                        await client.sendMessage(`${cleanPhone}@lid`, text);
+                    }
                 } else {
-                    console.log(`[AI-BOT] Number not registered for ${cleanPhone}, falling back to @lid`);
-                    await client.sendMessage(`${cleanPhone}@lid`, text);
+                    await client.sendMessage(chatId, text);
                 }
             } catch (err) {
-                console.log(`[AI-BOT] Error sending to @c.us, falling back to @lid for phone ${cleanPhone}. Error:`, err.message);
-                chatId = `${cleanPhone}@lid`;
+                console.log(`[AI-BOT] Error sending to ${chatId}, falling back to @lid. Error:`, err.message);
                 try {
-                    await client.sendMessage(chatId, text);
+                    await client.sendMessage(`${cleanPhone}@lid`, text);
                 } catch (lidErr) {
                     console.error(`[AI-BOT] Failed completely to send message to ${cleanPhone}:`, lidErr.message);
                 }
@@ -157,7 +176,7 @@ const WhatsAppController = {
             return;
         }
 
-        const phone = msg.from.split('@')[0]; // Clean @c.us or @lid
+        const phone = this.formatPhoneNumber(msg.from); // Clean @c.us or @lid and ensures 57 prefix
         const text = (msg.body || '').trim();
         console.log(`[AI-BOT] Received from ${msg.from} (clean: ${phone}): "${text}"`);
 
@@ -213,6 +232,74 @@ const WhatsAppController = {
                 return;
             }
 
+            // --- AI Intent Recognition ---
+            // If the user's message is not a deterministic command, we let AI check the intent.
+            // But we keep the deterministic flow for booking (AWAITING_ID, etc.)
+            // so we ONLY call AI if we are in 'ACTIVE' state or 'AWAITING_ID' (to allow switching to cancellation).
+            
+            const aiIntentsStates = [
+                'ACTIVE', 'AWAITING_ID', 'AWAITING_ENTIDAD', 'AWAITING_SERVICE', 
+                'AWAITING_SPECIALTY', 'AWAITING_REGIMEN', 'AWAITING_AUTORIZACION', 
+                'AWAITING_CONSULTATION_TYPE', 'AWAITING_FISIO_TYPE', 'AWAITING_ODONTO_TYPE', 
+                'AWAITING_ENFERM_TYPE', 'AWAITING_CATALOG_ITEM', 'AWAITING_DOCTOR', 
+                'AWAITING_DATE', 'AWAITING_SLOT'
+            ];
+            if (aiIntentsStates.includes(session.state)) {
+                // BYPASS AI FOR COMMON KEYWORDS (Fallback for API limits/errors)
+                // Normalize text: lowercase and remove accents
+                const lowerText = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                
+                // 1. Consultation Keywords
+                if (lowerText.includes('consultar') || lowerText.includes('mis citas') || lowerText === 'citas' || lowerText.includes('ver mis citas')) {
+                    await this.handleConsultationRequest(client, msg, phone, { action: 'consult_appointments' });
+                    return;
+                }
+                
+                // 2. Cancellation Keywords
+                if (lowerText === 'cancelar' || lowerText.includes('cancelar cita') || lowerText.includes('anular cita')) {
+                    await this.handleCancellationRequest(client, msg, phone, { action: 'list_appointments_for_cancellation' });
+                    return;
+                }
+                
+                // 3. Rescheduling Keywords
+                if (lowerText === 'reprogramar' || lowerText === 'reagendar' || lowerText.includes('reprogramar cita') || lowerText.includes('cambiar cita')) {
+                    await this.handleReschedulingRequest(client, msg, phone, { action: 'list_appointments_for_rescheduling' });
+                    return;
+                }
+
+                // AI fallback
+                const aiResponse = await AIService.chat(phone, text);
+                console.log(`[AI-BOT] AI response for ${phone}: ${aiResponse.action} - ${aiResponse.message}`);
+
+                if (aiResponse.action === 'consult_appointments') {
+                    await this.handleConsultationRequest(client, msg, phone, aiResponse);
+                    return;
+                }
+
+                if (aiResponse.action === 'list_appointments_for_cancellation') {
+                    await this.handleCancellationRequest(client, msg, phone, aiResponse);
+                    return;
+                }
+
+                if (aiResponse.action === 'list_appointments_for_rescheduling') {
+                    await this.handleReschedulingRequest(client, msg, phone, aiResponse);
+                    return;
+                }
+
+                if (aiResponse.action === 'request_advisor') {
+                    await this.reply(msg, 'Entendido. Un asesor humano revisará tus mensajes pronto.');
+                    await this.setBotStatus(phone, false);
+                    return;
+                }
+                
+                // If it's just a general question and AI is high confidence, we can just reply with the message
+                if (aiResponse.action === 'continue' && aiResponse.confidence === 'high' && !text.match(/^\d+$/)) {
+                    await this.reply(msg, aiResponse.message);
+                    return;
+                }
+            }
+            // --- End AI Intent Recognition ---
+
             // 4. Handle special states (cancellation confirmation)
             if (session.state === 'CONFIRMING_CANCELLATION') {
                 await this.handleCancellationConfirmation(client, msg, phone, session, text);
@@ -224,6 +311,21 @@ const WhatsAppController = {
                 return;
             }
 
+            if (session.state === 'SELECTING_APPOINTMENT_TO_RESCHEDULE') {
+                await this.handleAppointmentSelectionForRescheduling(client, msg, phone, session, text);
+                return;
+            }
+
+            if (session.state === 'RESCHEDULING_SELECT_DATE') {
+                await this.handleRescheduleDateSelection(client, msg, phone, session, text);
+                return;
+            }
+
+            if (session.state === 'RESCHEDULING_SELECT_SLOT') {
+                await this.handleRescheduleSlotSelection(client, msg, phone, session, text);
+                return;
+            }
+
             if (session.state === 'CONFIRMING_BOOKING') {
                 await this.handleBookingConfirmation(client, msg, phone, session, text);
                 return;
@@ -232,7 +334,7 @@ const WhatsAppController = {
             // 5. DETERMINISTIC FLOW (NO AI)
 
             if (session.state === 'ACTIVE') {
-                const txt = `Hola 👋 Bienvenido(a) a la IPS Nuestra Señora de Fátima.\n\nSoy Fátima 🤍 y te ayudaré a agendar tu cita.\n\nPara comenzar, por favor escribe tu número de cédula\n\n(sin puntos ni espacios).`;
+                const txt = `Hola 👋 Bienvenido(a) a la IPS Nuestra Señora de Fátima.\n\nSoy Fátima 🤍 y te ayudaré a agendar, consultar, reprogramar o cancelar tus citas.\n\nPara comenzar, por favor escribe tu número de cédula\n\n(sin puntos ni espacios).`;
                 await this.reply(msg, txt);
 
                 await db.query(
@@ -255,7 +357,7 @@ const WhatsAppController = {
                 payload.patient_id_number = cedula;
 
                 const entitiesRes = await db.query('SELECT name FROM entities WHERE is_active = TRUE ORDER BY name ASC');
-                let txt = '¡Gracias! ¿A qué entidad perteneces? Responde con el número correspondiente:\n\n';
+                let txt = '¡Gracias! ¿A qué entidad perteneces? Responde con el número correspondiente:\n_(O recuerda que puedes escribir "consultar", "reprogramar" o "cancelar" tus citas en cualquier momento)_\n\n';
                 entitiesRes.rows.forEach((ent, idx) => {
                     txt += `${idx + 1}. ${ent.name}\n`;
                 });
@@ -297,8 +399,8 @@ const WhatsAppController = {
                     return txtStr;
                 };
 
-                if (entidadStr === 'ARL' || entidadStr === 'SOAT') {
-                    let alertTxt = `⚠️ *IMPORTANTE*: Para agendar citas por ${entidadStr}, debes presentar en ventanilla:\n\n`;
+                if (entityStr === 'ARL' || entityStr === 'SOAT') {
+                    let alertTxt = `⚠️ *IMPORTANTE*: Para agendar citas por ${entityStr}, debes presentar en ventanilla:\n\n`;
                     alertTxt += `- Historia Clínica\n- ARL Vigente (si aplica)\n- Certificado laboral (si aplica)\n- Exámenes autorizados\n\n`;
                     alertTxt += `_Si no presentas esta documentación completa a la hora de llegar, no podrás tomar tu cita._\n\n`;
                     alertTxt += 'Continuemos. ¿Para qué *Servicio* deseas agendar cita? Responde con el número correspondiente:\n\n';
@@ -311,8 +413,8 @@ const WhatsAppController = {
                         ['AWAITING_SERVICE', JSON.stringify(payload), phone]
                     );
                     return;
-                } else if (entidadStr === 'ALIANZA SALUD' || entidadStr === 'COMPENSAR') {
-                    const txt = `¿A qué régimen perteneces en ${entidadStr}?\n\n1. Contributivo\n2. Subsidiado`;
+                } else if (entityStr === 'ALIANZA SALUD' || entityStr === 'COMPENSAR') {
+                    const txt = `¿A qué régimen perteneces en ${entityStr}?\n\n1. Contributivo\n2. Subsidiado`;
                     await this.reply(msg, txt);
 
                     await db.query(
@@ -320,7 +422,7 @@ const WhatsAppController = {
                         ['AWAITING_REGIMEN', JSON.stringify(payload), phone]
                     );
                     return;
-                } else if (entidadStr === 'MEDICINA PREPAGADA') {
+                } else if (entityStr === 'MEDICINA PREPAGADA') {
                     const txt = `Entendido. Por favor ingresa el *Número de Autorización* de tu servicio.\n\n_Si no lo tienes, será obligatorio presentarlo en ventanilla._`;
                     await this.reply(msg, txt);
 
@@ -329,7 +431,7 @@ const WhatsAppController = {
                         ['AWAITING_AUTORIZACION', JSON.stringify(payload), phone]
                     );
                     return;
-                } else if (entidadStr === 'PARTICULAR') {
+                } else if (entityStr === 'PARTICULAR') {
                     let txt = `Has seleccionado Particular.\n\n¿Para qué *Servicio* deseas agendar cita? Responde con el número correspondiente:\n\n`;
                     txt += await getMenuText(payload);
 
@@ -610,12 +712,12 @@ const WhatsAppController = {
                 return;
             }
 
-            // Reusable function to fetch doctors and send to AWAITING_DOCTOR
             const transitionToDoctorSelection = async (payloadObj, phoneNum, msgObj) => {
                 let q = `
                     SELECT DISTINCT d.id, d.full_name 
                     FROM doctors d
-                    JOIN specialties s ON d.specialty_id = s.id
+                    JOIN doctor_specialties ds ON d.id = ds.doctor_id
+                    JOIN specialties s ON ds.specialty_id = s.id
                     WHERE d.is_active = TRUE
                 `;
                 let params = [];
@@ -822,7 +924,7 @@ const WhatsAppController = {
 
                 for (let i = 0; i < 15 && availableDates.length < 5; i++) {
                     const dateStr = checkDate.toISOString().split('T')[0];
-                    const slots = await AvailabilityService.getAvailableSlots(doctorId, dateStr);
+                    const slots = await AvailabilityService.getAvailableSlots(doctorId, dateStr, payload.specialty_id);
                     if (slots.length > 0) {
                         availableDates.push(dateStr);
                     }
@@ -859,7 +961,7 @@ const WhatsAppController = {
                 }
 
                 const dateStr = payload.available_dates[index];
-                const slots = await AvailabilityService.getAvailableSlots(payload.doctor_id, dateStr);
+                const slots = await AvailabilityService.getAvailableSlots(payload.doctor_id, dateStr, payload.specialty_id);
 
                 if (slots.length === 0) {
                     await this.reply(msg, `Lo siento, ya no hay horarios para esa fecha. Escribe "HOLA" para empezar de nuevo.`);
@@ -1007,7 +1109,7 @@ const WhatsAppController = {
             JOIN patients p ON a.patient_id = p.id
             JOIN specialties s ON a.specialty_id = s.id
             JOIN doctors d ON a.doctor_id = d.id
-            WHERE p.phone = $1 AND a.status = 'BOOKED' AND a.start_datetime > CURRENT_TIMESTAMP
+            WHERE RIGHT(REGEXP_REPLACE(p.phone, '\D', '', 'g'), 10) = RIGHT($1, 10) AND a.status = 'BOOKED' AND a.start_datetime > CURRENT_TIMESTAMP
             ORDER BY a.start_datetime ASC
         `, [phone]);
 
@@ -1071,9 +1173,245 @@ const WhatsAppController = {
         }
     },
 
+    // Handle consultation request
+    async handleConsultationRequest(client, msg, phone, aiResponse) {
+        const res = await db.query(`
+            SELECT a.id, a.start_datetime, s.name as spec_name, d.full_name as doctor_name
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.id
+            JOIN specialties s ON a.specialty_id = s.id
+            JOIN doctors d ON a.doctor_id = d.id
+            WHERE RIGHT(REGEXP_REPLACE(p.phone, '\D', '', 'g'), 10) = RIGHT($1, 10) AND a.status IN ('BOOKED', 'CONFIRMED') AND a.start_datetime > CURRENT_TIMESTAMP
+            ORDER BY a.start_datetime ASC
+        `, [phone]);
+
+        if (res.rows.length === 0) {
+            await this.reply(msg, 'No tienes citas vigentes agendadas con este número de teléfono.');
+            return;
+        }
+
+        let listMsg = `📅 *Tus próximas citas:*\n\n`;
+        res.rows.forEach((apt, i) => {
+            const dateStr = new Date(apt.start_datetime).toLocaleString('es-ES', {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'America/Bogota'
+            });
+            listMsg += `🔹 *${i + 1}. ${apt.spec_name}*\n📅 ${dateStr}\n👨‍⚕️ Dr. ${apt.doctor_name}\n\n`;
+        });
+        listMsg += `_Si deseas cancelar o reprogramar alguna, solo dímelo._`;
+
+        await this.reply(msg, listMsg);
+    },
+
     // Handle rescheduling request
     async handleReschedulingRequest(client, msg, phone, aiResponse) {
-        await this.reply(msg, 'La función de reprogramación estará disponible pronto. Por ahora puedes cancelar y crear una nueva cita, o pedir un asesor humano.');
+        const res = await db.query(`
+            SELECT a.id, a.start_datetime, s.name as spec_name, d.full_name as doctor_name, a.doctor_id, a.specialty_id,
+                   (a.start_datetime > CURRENT_TIMESTAMP + interval '6 hours') as can_reschedule
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.id
+            JOIN specialties s ON a.specialty_id = s.id
+            JOIN doctors d ON a.doctor_id = d.id
+            WHERE RIGHT(REGEXP_REPLACE(p.phone, '\D', '', 'g'), 10) = RIGHT($1, 10) AND a.status = 'BOOKED' AND a.start_datetime > CURRENT_TIMESTAMP
+            ORDER BY a.start_datetime ASC
+        `, [phone]);
+
+        if (res.rows.length === 0) {
+            await this.reply(msg, 'No encontré citas vigentes que puedas reprogramar.');
+            return;
+        }
+
+        const reschedulable = res.rows.filter(r => r.can_reschedule);
+
+        if (reschedulable.length === 0) {
+            await this.reply(msg, 'Tienes citas agendadas, pero no pueden ser reprogramadas por este medio. Recuerda que para reprogramar una cita debes hacerlo con un mínimo de 6 horas de anticipación.');
+            return;
+        }
+
+        let listMsg = `Tienes ${reschedulable.length} cita(s) que puedes reprogramar:\n\n`;
+        reschedulable.forEach((apt, i) => {
+            const dateStr = new Date(apt.start_datetime).toLocaleString('es-ES', {
+                weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota'
+            });
+            listMsg += `${i + 1}. ${dateStr} - ${apt.spec_name}\n`;
+        });
+        listMsg += `\n¿Cuál deseas reprogramar? Responde con el número (1-${reschedulable.length}) o escribe *NINGUNA*.`;
+
+        await db.query(
+            'UPDATE conversation_sessions SET payload_json = $1, state = $2 WHERE phone = $3',
+            [JSON.stringify({ appointments_list: reschedulable }), 'SELECTING_APPOINTMENT_TO_RESCHEDULE', phone]
+        );
+
+        await this.reply(msg, listMsg);
+    },
+
+    async handleAppointmentSelectionForRescheduling(client, msg, phone, session, text) {
+        if (text.toLowerCase() === 'ninguna') {
+            await this.reply(msg, 'Entendido. ¿En qué más puedo ayudarte?');
+            await this.resetConversation(phone);
+            return;
+        }
+
+        const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+        const appointments = payload.appointments_list;
+        const selection = parseInt(text);
+
+        if (isNaN(selection) || selection < 1 || selection > appointments.length) {
+            await this.reply(msg, `Por favor responde con un número del 1 al ${appointments.length}, o escribe *NINGUNA*.`);
+            return;
+        }
+
+        const selectedApt = appointments[selection - 1];
+        
+        // Now find availability for this doctor/specialty
+        // We'll show the next 5 available days
+        let checkDate = new Date();
+        checkDate.setHours(0, 0, 0, 0);
+        const availableDates = [];
+
+        for (let i = 0; i < 15 && availableDates.length < 5; i++) {
+            const dateStr = checkDate.toISOString().split('T')[0];
+            const slots = await AvailabilityService.getAvailableSlots(selectedApt.doctor_id, dateStr, selectedApt.specialty_id);
+            if (slots.length > 0) {
+                availableDates.push(dateStr);
+            }
+            checkDate.setDate(checkDate.getDate() + 1);
+        }
+
+        if (availableDates.length === 0) {
+            await this.reply(msg, 'Lo siento, no encontré horarios disponibles próximos para reprogramar esta cita. Por favor intenta más tarde.');
+            await this.resetConversation(phone);
+            return;
+        }
+
+        let datesMsg = `Entendido. Vamos a reprogramar tu cita de *${selectedApt.spec_name}*.\n\nElige una de estas nuevas fechas:\n\n`;
+        availableDates.forEach((d, i) => {
+            const dateLabel = new Date(d + 'T00:00:00-05:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+            datesMsg += `${i + 1}. ${dateLabel}\n`;
+        });
+
+        await db.query(
+            'UPDATE conversation_sessions SET payload_json = $1, state = $2 WHERE phone = $3',
+            [JSON.stringify({ 
+                appointment_to_reschedule: selectedApt,
+                available_dates: availableDates 
+            }), 'RESCHEDULING_SELECT_DATE', phone]
+        );
+
+        await this.reply(msg, datesMsg);
+    },
+
+    async handleRescheduleDateSelection(client, msg, phone, session, text) {
+        const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+        const dates = payload.available_dates || [];
+        
+        let selectedDate = null;
+        const selection = parseInt(text);
+        if (!isNaN(selection) && selection >= 1 && selection <= dates.length) {
+            selectedDate = dates[selection - 1];
+        } else {
+            // Check if it's a direct date string YYYY-MM-DD
+            const match = text.match(/^\d{4}-\d{2}-\d{2}$/);
+            if (match) {
+                const found = dates.find(d => d === text);
+                if (found) selectedDate = found;
+            }
+        }
+
+        if (!selectedDate) {
+            await this.reply(msg, `Por favor elige una fecha válida entre 1 y ${dates.length}, o escribe la fecha (ej: 2026-03-20).`);
+            return;
+        }
+
+        // Now find slots for this date
+        const apt = payload.appointment_to_reschedule;
+        const slots = await AvailabilityService.getAvailableSlots(apt.doctor_id, selectedDate, apt.specialty_id);
+
+        if (slots.length === 0) {
+            await this.reply(msg, 'Lo siento, no hay horarios disponibles para esa fecha. ¿Podrías elegir otra?');
+            return;
+        }
+
+        let slotsMsg = `Perfecto. Elige un horario para el ${selectedDate}:\n\n`;
+        slots.forEach((s, i) => {
+            slotsMsg += `${i + 1}. ${s}\n`;
+        });
+        slotsMsg += `\n¿Cuál prefieres? Responde con el número.`;
+
+        await db.query(
+            'UPDATE conversation_sessions SET payload_json = $1, state = $2 WHERE phone = $3',
+            [JSON.stringify({ 
+                ...payload,
+                selected_date: selectedDate,
+                available_slots: slots 
+            }), 'RESCHEDULING_SELECT_SLOT', phone]
+        );
+
+        await this.reply(msg, slotsMsg);
+    },
+
+    async handleRescheduleSlotSelection(client, msg, phone, session, text) {
+        const payload = typeof session.payload_json === 'string' ? JSON.parse(session.payload_json) : (session.payload_json || {});
+        const slots = payload.available_slots || [];
+        
+        let selectedTime = null;
+        const selection = parseInt(text);
+        if (!isNaN(selection) && selection >= 1 && selection <= slots.length) {
+            selectedTime = slots[selection - 1];
+        } else {
+            // Check if it's a direct time string HH:MM
+            const match = text.match(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/);
+            if (match) {
+                const found = slots.find(s => s === text);
+                if (found) selectedTime = found;
+            }
+        }
+
+        if (!selectedTime) {
+            await this.reply(msg, `Por favor elige un horario válido entre 1 y ${slots.length}, o escribe la hora (ej: 09:30).`);
+            return;
+        }
+
+        // Perform rescheduling
+        try {
+            const apt = payload.appointment_to_reschedule;
+            const newDate = payload.selected_date;
+            const startStr = `${newDate}T${selectedTime}:00-05:00`;
+            
+            const specDb = await db.query('SELECT duration_minutes FROM specialties WHERE id = $1', [apt.specialty_id]);
+            const duration = specDb.rows[0]?.duration_minutes || 20;
+            const endDatetime = new Date(new Date(startStr).getTime() + duration * 60000).toISOString();
+
+            await db.query(
+                `UPDATE appointments 
+                 SET start_datetime = $1, end_datetime = $2, reminder_sent = FALSE 
+                 WHERE id = $3`,
+                [startStr, endDatetime, apt.id]
+            );
+
+            const dateLabel = new Date(startStr).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
+            const timeLabel = new Date(startStr).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' });
+
+            await this.reply(msg, `✅ ¡Listo! Tu cita de *${apt.spec_name}* ha sido reprogramada exitosamente.\n\n📅 Nueva fecha: ${dateLabel}\n⏰ Nueva hora: ${timeLabel}\n👨‍⚕️ Dr. ${apt.doctor_name}`);
+            
+            // Notify doctor
+            const docRes = await db.query('SELECT phone, full_name FROM doctors WHERE id = $1', [apt.doctor_id]);
+            if (docRes.rows.length > 0 && docRes.rows[0].phone) {
+                const docName = docRes.rows[0].full_name;
+                const docMsg = `🔄 *Aviso de Reprogramación*\n\nHola Dr. ${docName}, la cita del paciente con teléfono ${phone} ha sido reprogramada por el usuario:\n\n📅 Nueva Fecha: ${dateLabel}\n⏰ Nueva Hora: ${timeLabel}\n🏥 Especialidad: ${apt.spec_name}`;
+                setTimeout(() => this.sendMessage(client, docRes.rows[0].phone, docMsg), 10000);
+            }
+
+            await this.resetConversation(phone);
+        } catch (err) {
+            console.error('Error rescheduling:', err);
+            await this.reply(msg, 'Lo siento, hubo un error al reprogramar tu cita. Por favor intenta más tarde.');
+            await this.resetConversation(phone);
+        }
     },
 
     // Handle booking confirmation
@@ -1086,7 +1424,7 @@ const WhatsAppController = {
 
             try {
                 const specialties = await db.query('SELECT id, name FROM specialties WHERE is_active = TRUE');
-                const doctors = await db.query('SELECT id, full_name, specialty_id, phone FROM doctors WHERE is_active = TRUE');
+                const doctors = await db.query('SELECT d.id, d.full_name, array_agg(ds.specialty_id) as specialty_id, d.phone FROM doctors d LEFT JOIN doctor_specialties ds ON d.id = ds.doctor_id WHERE d.is_active = TRUE GROUP BY d.id');
 
                 // Book the appointment
                 const appointment = await this.bookAppointment(phone, data, data.doctorId);
@@ -1163,7 +1501,7 @@ const WhatsAppController = {
         }
 
         // Get available slots for the date
-        const slots = await AvailabilityService.getAvailableSlots(doctorId, validated.date);
+        const slots = await AvailabilityService.getAvailableSlots(doctorId, validated.date, validated.specialty_id);
 
         if (slots.length === 0) {
             await this.reply(msg, `No hay horarios disponibles para ${validated.date}. ¿Quieres probar otra fecha?`);
@@ -1241,7 +1579,7 @@ const WhatsAppController = {
 
             for (let i = 0; i < 15 && availableDates.length < 5; i++) {
                 const dateStr = checkDate.toISOString().split('T')[0];
-                const slots = await AvailabilityService.getAvailableSlots(doctorId, dateStr);
+                const slots = await AvailabilityService.getAvailableSlots(doctorId, dateStr, validated.specialty_id);
                 if (slots.length > 0) {
                     availableDates.push(dateStr);
                 }
@@ -1265,7 +1603,7 @@ const WhatsAppController = {
         }
 
         // If date provided, return available slots for that date
-        const slots = await AvailabilityService.getAvailableSlots(doctorId, validated.date);
+        const slots = await AvailabilityService.getAvailableSlots(doctorId, validated.date, validated.specialty_id);
 
         if (slots.length === 0) {
             const aiNoSlots = await AIService.generateResponse(phone, `INSTRUCCIÓN: Infórmale al usuario que no hay horarios libres para la fecha ${validated.date}. Pregúntale si quiere intentar otro día. Responde en formato JSON.`);
@@ -1293,11 +1631,11 @@ const WhatsAppController = {
 
     // Book appointment (DB ONLY)
     async bookAppointment(phone, data, doctorId) {
-        // Get or create patient
-        let patient = await db.query('SELECT id FROM patients WHERE phone = $1', [phone]);
+        // Get or create patient - Use last 10 digits to avoid duplicates with/without 57 prefix
+        const patRes = await db.query("SELECT id FROM patients WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = RIGHT($1, 10)", [phone]);
         let patientId;
 
-        if (patient.rows.length === 0) {
+        if (patRes.rows.length === 0) {
             const newPatient = await db.query(
                 'INSERT INTO patients (phone, full_name, document_id) VALUES ($1, $2, $3) RETURNING id',
                 [phone, data.patient_name, data.document_id]
@@ -1314,7 +1652,9 @@ const WhatsAppController = {
 
         // Create appointment
         const startStr = `${data.date}T${data.time}:00-05:00`;
-        const endDatetime = new Date(new Date(startStr).getTime() + 30 * 60000).toISOString();
+        const specDb = await db.query('SELECT duration_minutes FROM specialties WHERE id = $1', [data.specialty_id]);
+        const duration = specDb.rows[0]?.duration_minutes || 20;
+        const endDatetime = new Date(new Date(startStr).getTime() + duration * 60000).toISOString();
         const confCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
         let notes = null;
@@ -1327,7 +1667,7 @@ const WhatsAppController = {
              (patient_id, doctor_id, specialty_id, start_datetime, end_datetime, duration_minutes, source, confirmation_code, status, total_price, notes) 
              VALUES ($1, $2, $3, $4, $5, $6, 'WHATSAPP', $7, 'BOOKED', $8, $9) 
              RETURNING *`,
-            [patientId, doctorId, data.specialty_id, startStr, endDatetime, 30, confCode, data.total_price || null, notes]
+            [patientId, doctorId, data.specialty_id, startStr, endDatetime, duration, confCode, data.total_price || null, notes]
         );
         return result.rows[0];
     },

@@ -10,6 +10,7 @@ const createTables = async () => {
       password_hash VARCHAR(255) NOT NULL,
       role VARCHAR(50) NOT NULL DEFAULT 'PATIENT', -- ADMIN, DOCTOR, RECEPTIONIST, PATIENT
       reference_id UUID, -- References to doctor.id or patient.id if needed
+      notify_personal_phone BOOLEAN DEFAULT TRUE,
       is_active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -27,6 +28,7 @@ const createTables = async () => {
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       name VARCHAR(100) NOT NULL,
       description TEXT,
+      color VARCHAR(20) DEFAULT '#3B82F6',
       duration_minutes INTEGER NOT NULL DEFAULT 30,
       capacity INTEGER NOT NULL DEFAULT 1,
       is_active BOOLEAN DEFAULT TRUE,
@@ -62,6 +64,7 @@ const createTables = async () => {
     CREATE TABLE IF NOT EXISTS doctor_schedules (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       doctor_id UUID REFERENCES doctors(id),
+      specialty_id UUID REFERENCES specialties(id) ON DELETE CASCADE,
       weekday INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
       start_time TIME NOT NULL,
       end_time TIME NOT NULL,
@@ -143,6 +146,14 @@ const createTables = async () => {
         ALTER TABLE appointments ADD COLUMN notes TEXT; 
       END IF;
 
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='specialties' AND column_name='color') THEN 
+        ALTER TABLE specialties ADD COLUMN color VARCHAR(20) DEFAULT '#3B82F6'; 
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='doctor_schedules' AND column_name='specialty_id') THEN 
+        ALTER TABLE doctor_schedules ADD COLUMN specialty_id UUID REFERENCES specialties(id) ON DELETE CASCADE; 
+      END IF;
+
       -- Add service_id to specialties if it doesnt exist
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='specialties' AND column_name='service_id') THEN 
         ALTER TABLE specialties ADD COLUMN service_id UUID REFERENCES services(id);
@@ -165,6 +176,10 @@ const createTables = async () => {
       END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='patients' AND column_name='birth_date') THEN
         ALTER TABLE patients ADD COLUMN birth_date DATE;
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='notify_personal_phone') THEN
+        ALTER TABLE users ADD COLUMN notify_personal_phone BOOLEAN DEFAULT TRUE;
       END IF;
 
     END $$;

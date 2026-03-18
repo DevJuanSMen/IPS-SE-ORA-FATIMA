@@ -15,15 +15,19 @@ module.exports = (client) => {
                 const specialtyRes = await db.query('SELECT duration_minutes FROM specialties WHERE id = $1', [specialtyId]);
                 if (specialtyRes.rows.length === 0) return res.status(404).json({ error: 'Specialty not found' });
 
-                // 2. Find doctors for this specialty
-                const doctorsRes = await db.query('SELECT id, full_name FROM doctors WHERE specialty_id = $1 AND is_active = TRUE', [specialtyId]);
+                // 2. Find doctors for this specialty via many-to-many join
+                const doctorsRes = await db.query(`
+                    SELECT d.id, d.full_name FROM doctors d
+                    JOIN doctor_specialties ds ON d.id = ds.doctor_id
+                    WHERE ds.specialty_id = $1 AND d.is_active = TRUE
+                `, [specialtyId]);
                 const doctors = doctorsRes.rows;
 
                 const availableSlots = [];
 
                 for (const doctor of doctors) {
                     // Use shared service logic
-                    const slots = await AvailabilityService.getAvailableSlots(doctor.id, date);
+                    const slots = await AvailabilityService.getAvailableSlots(doctor.id, date, specialtyId);
 
                     if (slots.length > 0) {
                         availableSlots.push({
@@ -91,28 +95,40 @@ module.exports = (client) => {
                     }
 
                     if (phone) {
-                        const docRes = await db.query('SELECT phone, full_name FROM doctors WHERE id = $1', [doctor_id]);
+                        const [docRes, userSetRes] = await Promise.all([
+                            db.query('SELECT phone, full_name FROM doctors WHERE id = $1', [doctor_id]),
+                            db.query('SELECT notify_personal_phone FROM users WHERE reference_id = $1 OR id = $1', [patient_id]) // Case patient
+                        ]);
+
                         const doctorName = docRes.rows[0]?.full_name;
                         const doctorPhone = docRes.rows[0]?.phone;
+                        const patientNotifyEnabled = userSetRes.rows.length === 0 || userSetRes.rows[0].notify_personal_phone !== false;
 
                         // Use WhatsAppController helper
-                        WhatsAppController.sendBookingConfirmation(
-                            client,
-                            phone,
-                            appointment,
-                            specialtyName,
-                            doctorName,
-                            pName
-                        ).catch(err => console.error('Failed to send confirmation:', err));
+                        if (patientNotifyEnabled) {
+                            WhatsAppController.sendBookingConfirmation(
+                                client,
+                                phone,
+                                appointment,
+                                specialtyName,
+                                doctorName,
+                                pName
+                            ).catch(err => console.error('Failed to send confirmation:', err));
+                        }
 
-                        // Delayed notification to doctor (Check if enabled via env var and apply 15s delay)
+                        // Delayed notification to doctor (Check if enabled via env var, user setting and apply 15s delay)
                         if (doctorPhone && process.env.ENABLE_DOCTOR_NOTIFICATIONS !== 'false') {
-                            setTimeout(async () => {
-                                const dateStr = new Date(appointment.start_datetime).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
-                                const timeStr = new Date(appointment.start_datetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' });
-                                const docMessage = `🔔 *¡Nueva Cita Agendada!*\n\nHola Dr. ${doctorName}, tienes un nuevo paciente (agendado por administración):\n\n👤 Paciente: ${pName}\n📱 Teléfono: ${phone}\n📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${specialtyName || ''}`;
-                                await WhatsAppController.sendMessage(client, doctorPhone, docMessage);
-                            }, 15000); // 15 sec delay to avoid suspension
+                            const docSetRes = await db.query('SELECT notify_personal_phone FROM users WHERE reference_id = $1', [doctor_id]);
+                            const docNotifyEnabled = docSetRes.rows.length === 0 || docSetRes.rows[0].notify_personal_phone !== false;
+
+                            if (docNotifyEnabled) {
+                                setTimeout(async () => {
+                                    const dateStr = new Date(appointment.start_datetime).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
+                                    const timeStr = new Date(appointment.start_datetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' });
+                                    const docMessage = `🔔 *¡Nueva Cita Agendada!*\n\nHola Dr. ${doctorName}, tienes un nuevo paciente (agendado por administración):\n\n👤 Paciente: ${pName}\n📱 Teléfono: ${phone}\n📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${specialtyName || ''}`;
+                                    await WhatsAppController.sendMessage(client, doctorPhone, docMessage);
+                                }, 15000); // 15 sec delay to avoid suspension
+                            }
                         }
                     }
                 }
@@ -221,7 +237,36 @@ module.exports = (client) => {
                 );
 
                 if (result.rows.length === 0) return res.status(404).json({ error: 'Appointment not found' });
-                res.json(result.rows[0]);
+                const updatedApt = result.rows[0];
+
+                // Notify patient on rescheduling
+                if (client && start_datetime) {
+                    try {
+                        const patRes = await db.query(`
+                            SELECT p.phone, p.full_name, s.name as spec_name, d.full_name as doc_name, u.notify_personal_phone 
+                            FROM patients p 
+                            JOIN appointments a ON a.patient_id = p.id
+                            JOIN specialties s ON a.specialty_id = s.id
+                            JOIN doctors d ON a.doctor_id = d.id
+                            LEFT JOIN users u ON u.reference_id = p.id
+                            WHERE a.id = $1
+                        `, [id]);
+
+                        if (patRes.rows.length > 0) {
+                            const { phone, full_name, spec_name, doc_name, notify_personal_phone } = patRes.rows[0];
+                            if (notify_personal_phone !== false) {
+                                const dateLabel = new Date(start_datetime).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
+                                const timeLabel = new Date(start_datetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' });
+                                const message = `🔄 *Aviso de Reprogramación*\n\nHola ${full_name}, te informamos que tu cita de *${spec_name}* ha sido reprogramada por administración:\n\n📅 Nueva Fecha: ${dateLabel}\n⏰ Nueva Hora: ${timeLabel}\n👨‍⚕️ Dr. ${doc_name}`;
+                                WhatsAppController.sendMessage(client, phone, message).catch(err => console.error('Failed to send update notification:', err));
+                            }
+                        }
+                    } catch (notifyErr) {
+                        console.error('Error sending reschedule notification:', notifyErr);
+                    }
+                }
+
+                res.json(updatedApt);
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
@@ -235,7 +280,33 @@ module.exports = (client) => {
                     [id]
                 );
                 if (result.rows.length === 0) return res.status(404).json({ error: 'Appointment not found' });
-                res.json(result.rows[0]);
+                const cancelledApt = result.rows[0];
+
+                // Notify patient on cancellation
+                if (client) {
+                    try {
+                        const patRes = await db.query(`
+                            SELECT p.phone, p.full_name, s.name as spec_name, u.notify_personal_phone 
+                            FROM patients p 
+                            JOIN appointments a ON a.patient_id = p.id
+                            JOIN specialties s ON a.specialty_id = s.id
+                            LEFT JOIN users u ON u.reference_id = p.id
+                            WHERE a.id = $1
+                        `, [id]);
+
+                        if (patRes.rows.length > 0) {
+                            const { phone, full_name, spec_name, notify_personal_phone } = patRes.rows[0];
+                            if (notify_personal_phone !== false) {
+                                const message = `🚫 *Cita Cancelada*\n\nHola ${full_name}, te informamos que tu cita de *${spec_name}* ha sido cancelada por administración. Si tienes dudas, por favor contáctanos.`;
+                                WhatsAppController.sendMessage(client, phone, message).catch(err => console.error('Failed to send cancel notification:', err));
+                            }
+                        }
+                    } catch (notifyErr) {
+                        console.error('Error sending cancel notification:', notifyErr);
+                    }
+                }
+
+                res.json(cancelledApt);
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
@@ -270,14 +341,22 @@ module.exports = (client) => {
 
                 for (let apt of res.rows) {
                     if (client && apt.phone) {
-                        const timeStr = new Date(apt.start_datetime).toLocaleTimeString('es-ES', {
-                            hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota'
-                        });
-                        const message = `🔔 *Recordatorio de Cita*\n\nHola ${apt.patient_name}, te recordamos que tienes una cita programada en aproximadamente 1 hora:\n\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${apt.spec_name}\n👨‍⚕️ Dr. ${apt.doc_name}\n\n¡Por favor sé puntual!`;
-                        await WhatsAppController.sendMessage(client, apt.phone, message);
+                        // Check if patient has notifications enabled
+                        const userRes = await db.query('SELECT notify_personal_phone FROM users WHERE reference_id = $1', [apt.patient_id]);
+                        const notifyEnabled = userRes.rows.length === 0 || userRes.rows[0].notify_personal_phone !== false;
+
+                        if (notifyEnabled) {
+                            const timeStr = new Date(apt.start_datetime).toLocaleTimeString('es-ES', {
+                                hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota'
+                            });
+                            const message = `🔔 *Recordatorio de Cita*\n\nHola ${apt.patient_name}, te recordamos que tienes una cita programada en aproximadamente 1 hora:\n\n⏰ Hora: ${timeStr}\n🏥 Especialidad: ${apt.spec_name}\n👨‍⚕️ Dr. ${apt.doc_name}\n\n¡Por favor sé puntual!`;
+                            await WhatsAppController.sendMessage(client, apt.phone, message);
+                            console.log(`[Auto-Job] Sent 1-hour reminder for appointment ${apt.id}`);
+                        } else {
+                            console.log(`[Auto-Job] Skipping reminder for appointment ${apt.id} (Notifications disabled by user)`);
+                        }
 
                         await db.query('UPDATE appointments SET reminder_sent = TRUE WHERE id = $1', [apt.id]);
-                        console.log(`[Auto-Job] Sent 1-hour reminder for appointment ${apt.id}`);
                     }
                 }
             } catch (err) {

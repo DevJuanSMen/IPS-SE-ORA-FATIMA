@@ -4,14 +4,14 @@ const AvailabilityService = {
     // Find a doctor for a specialty
     async findDoctorForSpecialty(specialtyId) {
         const res = await db.query(
-            'SELECT id FROM doctors WHERE specialty_id = $1 AND is_active = TRUE LIMIT 1',
+            'SELECT d.id FROM doctors d JOIN doctor_specialties ds ON d.id = ds.doctor_id WHERE ds.specialty_id = $1 AND d.is_active = TRUE LIMIT 1',
             [specialtyId]
         );
         return res.rows[0]?.id || null;
     },
 
     // Get available time slots
-    async getAvailableSlots(doctorId, date) {
+    async getAvailableSlots(doctorId, date, specialtyId) {
         // Get doctor's schedule for this day
         // Note: date input is expected to be YYYY-MM-DD string
         const dayOfWeek = new Date(date).getDay();
@@ -24,9 +24,10 @@ const AvailabilityService = {
             `SELECT start_time, end_time, special_date, weekday 
              FROM doctor_schedules 
              WHERE doctor_id = $1 
+             AND (specialty_id = $4 OR specialty_id IS NULL)
              AND is_active = TRUE 
              AND (special_date = $2 OR (special_date IS NULL AND weekday = $3))`,
-            [doctorId, date, dayOfWeek]
+            [doctorId, date, dayOfWeek, specialtyId]
         );
 
         // Filter: If there are any special dates for today, IGNORE the regular recurring weekday schedules.
@@ -46,31 +47,45 @@ const AvailabilityService = {
             [doctorId, date]
         );
 
-        const spec = await db.query(
-            'SELECT s.capacity FROM specialties s JOIN doctors d ON d.specialty_id = s.id WHERE d.id = $1',
-            [doctorId]
-        );
-        const capacity = spec.rows[0]?.capacity || 1;
+        let finalSpecialtyId = specialtyId;
+        if (!finalSpecialtyId) {
+            // Find doctor's first specialty
+            const docSpec = await db.query(
+                `SELECT specialty_id FROM doctor_specialties WHERE doctor_id = $1 LIMIT 1`,
+                [doctorId]
+            );
+            finalSpecialtyId = docSpec.rows[0]?.specialty_id;
+        }
+
+        const spec = finalSpecialtyId ? await db.query(
+            'SELECT name, duration_minutes, capacity FROM specialties WHERE id = $1 LIMIT 1',
+            [finalSpecialtyId]
+        ) : null;
+
+        const capacity = spec?.rows[0]?.capacity || 1;
+        const durationMinutes = spec?.rows[0]?.duration_minutes || 20;
 
         const booked = await db.query(`
-            SELECT start_datetime FROM appointments
+            SELECT start_datetime, end_datetime FROM appointments
             WHERE doctor_id = $1 
             AND DATE(start_datetime AT TIME ZONE 'America/Bogota') = $2
             AND status != 'CANCELLED'
         `, [doctorId, date]);
 
-        const bookedCounts = {};
-        for (const row of booked.rows) {
-            const dt = new Date(row.start_datetime);
-            const timeSlot = dt.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-                timeZone: 'America/Bogota'
-            }); // returns HH:MM
-
-            bookedCounts[timeSlot] = (bookedCounts[timeSlot] || 0) + 1;
-        }
+        const bookedRanges = booked.rows.map(row => {
+            const startDt = new Date(row.start_datetime);
+            const endDt = new Date(row.end_datetime);
+            
+            // Adjust to timezone or just use the local time from DB equivalent 
+            // The DB returns UTC TIMESTAMPTZ, but getHours() gives local time of the Node server.
+            // Let's format them in Bogota time using a reliable string slice
+            const localeStart = new Date(startDt.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+            const localeEnd = new Date(endDt.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+            
+            const startMins = localeStart.getHours() * 60 + localeStart.getMinutes();
+            const endMins = localeEnd.getHours() * 60 + localeEnd.getMinutes();
+            return { start: startMins, end: endMins };
+        });
 
         const blockedRanges = blocks.rows.map(b => ({
             start: b.start_time.substring(0, 5),
@@ -86,13 +101,19 @@ const AvailabilityService = {
             let current = startHour * 60 + startMin;
             const end = endHour * 60 + endMin;
 
-            while (current < end) {
+            while (current + durationMinutes <= end) {
                 const h = Math.floor(current / 60).toString().padStart(2, '0');
                 const m = (current % 60).toString().padStart(2, '0');
                 const timeSlot = `${h}:${m}`;
 
                 // Check if booked to capacity
-                const isBooked = (bookedCounts[timeSlot] || 0) >= capacity;
+                let overlaps = 0;
+                for (const range of bookedRanges) {
+                    if (current < range.end && (current + durationMinutes) > range.start) {
+                        overlaps++;
+                    }
+                }
+                const isBooked = overlaps >= capacity;
 
                 // Check if blocked
                 const isBlocked = blockedRanges.some(range => {
@@ -100,15 +121,15 @@ const AvailabilityService = {
                     const [blockEndH, blockEndM] = range.end.split(':').map(Number);
                     const blockStart = blockStartH * 60 + blockStartM;
                     const blockEnd = blockEndH * 60 + blockEndM;
-                    // Block encompasses slot start
-                    return current >= blockStart && current < blockEnd;
+                    // Block overlaps with slot
+                    return current < blockEnd && (current + durationMinutes) > blockStart;
                 });
 
                 if (!isBooked && !isBlocked) {
                     slots.push(timeSlot);
                 }
 
-                current += 30; // 30-minute slots
+                current += durationMinutes;
             }
         }
 

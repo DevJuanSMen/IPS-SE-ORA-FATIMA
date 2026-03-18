@@ -16,11 +16,11 @@ const SpecialtyController = {
     },
 
     async create(req, res) {
-        const { name, description, duration_minutes, service_id } = req.body;
+        const { name, description, duration_minutes, service_id, color } = req.body;
         try {
             const result = await db.query(
-                'INSERT INTO specialties (name, description, duration_minutes, service_id) VALUES ($1, $2, $3, $4) RETURNING *',
-                [name, description, duration_minutes, service_id || null]
+                'INSERT INTO specialties (name, description, duration_minutes, service_id, color) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                [name, description, duration_minutes, service_id || null, color || '#3B82F6']
             );
             res.status(201).json(result.rows[0]);
         } catch (err) {
@@ -30,11 +30,11 @@ const SpecialtyController = {
 
     async update(req, res) {
         const { id } = req.params;
-        const { name, description, duration_minutes, is_active, service_id } = req.body;
+        const { name, description, duration_minutes, is_active, service_id, color } = req.body;
         try {
             const result = await db.query(
-                'UPDATE specialties SET name = $1, description = $2, duration_minutes = $3, is_active = $4, service_id = $5 WHERE id = $6 RETURNING *',
-                [name, description, duration_minutes, is_active !== undefined ? is_active : true, service_id || null, id]
+                'UPDATE specialties SET name = $1, description = $2, duration_minutes = $3, is_active = $4, service_id = $5, color = $6 WHERE id = $7 RETURNING *',
+                [name, description, duration_minutes, is_active !== undefined ? is_active : true, service_id || null, color || '#3B82F6', id]
             );
             if (result.rows.length === 0) return res.status(404).json({ error: 'Specialty not found' });
             res.json(result.rows[0]);

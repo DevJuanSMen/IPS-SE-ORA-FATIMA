@@ -5,7 +5,7 @@ const ScheduleController = {
         const { doctorId } = req.params;
         try {
             const result = await db.query(
-                'SELECT * FROM doctor_schedules WHERE doctor_id = $1 AND is_active = TRUE ORDER BY special_date NULLS FIRST, weekday ASC, start_time ASC',
+                'SELECT ds.*, s.name as specialty_name, s.color as specialty_color FROM doctor_schedules ds LEFT JOIN specialties s ON ds.specialty_id = s.id WHERE ds.doctor_id = $1 AND ds.is_active = TRUE ORDER BY ds.special_date NULLS FIRST, ds.weekday ASC, ds.start_time ASC',
                 [doctorId]
             );
             res.json(result.rows);
@@ -15,7 +15,7 @@ const ScheduleController = {
     },
 
     async create(req, res) {
-        const { doctor_id, weekdays, start_time, end_time, special_date, special_dates } = req.body;
+        const { doctor_id, specialty_id, weekdays, start_time, end_time, special_date, special_dates } = req.body;
         try {
             const results = [];
 
@@ -24,8 +24,8 @@ const ScheduleController = {
                 const dates = special_dates || [special_date];
                 for (const date of dates) {
                     const result = await db.query(
-                        'INSERT INTO doctor_schedules (doctor_id, special_date, start_time, end_time) VALUES ($1, $2, $3, $4) RETURNING *',
-                        [doctor_id, date, start_time, end_time]
+                        'INSERT INTO doctor_schedules (doctor_id, specialty_id, special_date, start_time, end_time) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                        [doctor_id, specialty_id || null, date, start_time, end_time]
                     );
                     results.push(result.rows[0]);
                 }
@@ -36,8 +36,8 @@ const ScheduleController = {
 
                 for (const weekday of days) {
                     const result = await db.query(
-                        'INSERT INTO doctor_schedules (doctor_id, weekday, start_time, end_time) VALUES ($1, $2, $3, $4) RETURNING *',
-                        [doctor_id, weekday, start_time, end_time]
+                        'INSERT INTO doctor_schedules (doctor_id, specialty_id, weekday, start_time, end_time) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                        [doctor_id, specialty_id || null, weekday, start_time, end_time]
                     );
                     results.push(result.rows[0]);
                 }

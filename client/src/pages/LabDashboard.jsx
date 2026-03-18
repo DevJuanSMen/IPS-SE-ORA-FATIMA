@@ -20,6 +20,9 @@ export default function LabDashboard() {
     const [uploadFile, setUploadFile] = useState(null);
     const [uploadName, setUploadName] = useState('');
     const [uploading, setUploading] = useState(false);
+    const [view, setView] = useState('folders'); // 'folders' | 'appointments'
+    const [labAppointments, setLabAppointments] = useState([]);
+    const [lastCheckedAppointments, setLastCheckedAppointments] = useState(parseInt(localStorage.getItem('lab_last_checked') || '0'));
     const fileRef = useRef(null);
 
     useEffect(() => {
@@ -27,7 +30,24 @@ export default function LabDashboard() {
         localStorage.setItem('theme', theme);
     }, [theme]);
 
-    useEffect(() => { fetchFolders(); }, []);
+    useEffect(() => {
+        fetchFolders();
+        fetchLabAppointments();
+
+        // Refresh appointments every 30 seconds for "notifications"
+        const interval = setInterval(fetchLabAppointments, 30000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const fetchLabAppointments = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/api/appointments`);
+            const lab = Array.isArray(res.data) ? res.data.filter(a =>
+                (a.specialty_name && a.specialty_name.toLowerCase().includes('laboratorio'))
+            ) : [];
+            setLabAppointments(lab);
+        } catch (err) { console.error(err); }
+    };
 
     const fetchFolders = async () => {
         try {
@@ -104,6 +124,8 @@ export default function LabDashboard() {
 
     const logout = () => { localStorage.clear(); window.location.href = '/login'; };
 
+    const newAppointmentsCount = labAppointments.filter(a => a.id > lastCheckedAppointments).length;
+
     return (
         <div className="min-h-screen bg-slate-100 dark:bg-[#0B1437] text-slate-800 dark:text-white transition-colors duration-300">
             {/* Header */}
@@ -112,25 +134,48 @@ export default function LabDashboard() {
                     <img src={LogoImage} alt="Logo" className="h-10 w-auto" />
                     <div>
                         <h1 className="font-bold text-slate-800 dark:text-white text-sm">Laboratorio Clínico</h1>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Gestión de Resultados</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">IPS Nuestra Señora de Fátima</p>
                     </div>
                 </div>
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-                        className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-white/5 transition-colors text-slate-500 dark:text-slate-400">
-                        {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-                    </button>
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-white/5 cursor-pointer hover:bg-slate-200 dark:hover:bg-white/10 transition-colors"
-                        onClick={() => setShowProfile(!showProfile)}>
-                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                            style={{ background: 'linear-gradient(135deg, #22d3ee, #446DF5)' }}>
-                            {(user.full_name || user.username || 'L')[0].toUpperCase()}
+                <div className="flex items-center gap-6">
+                    <nav className="hidden md:flex items-center gap-1 bg-slate-100 dark:bg-white/5 p-1 rounded-xl">
+                        <button onClick={() => setView('folders')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${view === 'folders' ? 'bg-white dark:bg-blue-600 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                            Pacientes
+                        </button>
+                        <button onClick={() => {
+                            setView('appointments');
+                            const maxId = labAppointments.reduce((max, a) => Math.max(max, a.id), 0);
+                            if (maxId > lastCheckedAppointments) {
+                                setLastCheckedAppointments(maxId);
+                                localStorage.setItem('lab_last_checked', maxId);
+                            }
+                        }}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${view === 'appointments' ? 'bg-white dark:bg-blue-600 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                            Citas / Clientes
+                            {newAppointmentsCount > 0 && (
+                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                            )}
+                        </button>
+                    </nav>
+
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+                            className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-white/5 transition-colors text-slate-500 dark:text-slate-400">
+                            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                        </button>
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-white/5 cursor-pointer hover:bg-slate-200 dark:hover:bg-white/10 transition-colors"
+                            onClick={() => setShowProfile(!showProfile)}>
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                                style={{ background: 'linear-gradient(135deg, #22d3ee, #446DF5)' }}>
+                                {(user.full_name || user.username || 'L')[0].toUpperCase()}
+                            </div>
+                            <span className="text-sm font-semibold text-slate-800 dark:text-white">{user.full_name || user.username}</span>
                         </div>
-                        <span className="text-sm font-semibold text-slate-800 dark:text-white">{user.full_name || user.username}</span>
+                        <button onClick={logout} className="p-2 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors">
+                            <LogOut size={18} />
+                        </button>
                     </div>
-                    <button onClick={logout} className="p-2 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors">
-                        <LogOut size={18} />
-                    </button>
                 </div>
             </header>
 
@@ -138,6 +183,81 @@ export default function LabDashboard() {
                 {showProfile ? (
                     <div className="animate-in fade-in zoom-in duration-300">
                         <ProfileView user={user} onUpdateUser={setUser} />
+                    </div>
+                ) : view === 'appointments' ? (
+                    /* Lab Appointments View */
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="mb-6">
+                            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Citas de Laboratorio 🧪</h2>
+                            <p className="text-sm text-slate-400 mt-1">{labAppointments.length} citas registradas</p>
+                        </div>
+
+                        <div className="bg-white dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700/50 overflow-hidden shadow-sm">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr className="bg-slate-50 dark:bg-white/5 text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider">
+                                            <th className="px-6 py-4">Paciente</th>
+                                            <th className="px-6 py-4">Fecha / Hora</th>
+                                            <th className="px-6 py-4">Estado</th>
+                                            <th className="px-6 py-4">Origen</th>
+                                            <th className="px-6 py-4">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                                        {labAppointments.map(apt => (
+                                            <tr key={apt.id} className={`group hover:bg-slate-50 dark:hover:bg-white/5 transition-colors ${apt.id > (parseInt(localStorage.getItem('lab_last_checked') || '0')) ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-500 font-bold text-xs">
+                                                            {(apt.patient_name || 'P')[0].toUpperCase()}
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-sm font-semibold text-slate-800 dark:text-white">{apt.patient_name}</p>
+                                                            <p className="text-xs text-slate-400">{apt.patient_phone}</p>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <p className="text-sm text-slate-700 dark:text-slate-200">
+                                                        {new Date(apt.start_datetime).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
+                                                    </p>
+                                                    <p className="text-xs text-slate-400">
+                                                        {new Date(apt.start_datetime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                    </p>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${apt.status === 'BOOKED' ? 'bg-blue-500/10 text-blue-500' :
+                                                            apt.status === 'COMPLETED' ? 'bg-green-500/10 text-green-500' :
+                                                                apt.status === 'CANCELLED' ? 'bg-red-500/10 text-red-500' : 'bg-slate-500/10 text-slate-500'
+                                                        }`}>
+                                                        {apt.status === 'BOOKED' ? 'Programada' : apt.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400">
+                                                    {apt.source || 'ADMIN'}
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <button onClick={() => {
+                                                        const p = folders.find(f => f.id === apt.patient_id);
+                                                        if (p) openFolder(p);
+                                                        else alert('Paciente no encontrado en la base de datos de laboratorio');
+                                                    }}
+                                                        className="p-2 rounded-lg bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors">
+                                                        <FolderOpen size={16} />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {labAppointments.length === 0 && (
+                                <div className="py-20 text-center text-slate-400">
+                                    <p>No se encontraron citas de laboratorio</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 ) : !selectedPatient ? (
                     /* Patient list / folders */

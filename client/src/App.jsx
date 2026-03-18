@@ -97,9 +97,12 @@ function App() {
     const [patients, setPatients] = useState([]);
     const [patientsLoading, setPatientsLoading] = useState(false);
     const [patientSearch, setPatientSearch] = useState('');
+    const [patientResults, setPatientResults] = useState([]);
+    const [viewingImage, setViewingImage] = useState(null);
 
     // Admin Sub Tabs
     const [activeAdminSubTab, setActiveAdminSubTab] = useState('services');
+    const [appointmentsView, setAppointmentsView] = useState('upcoming'); // 'upcoming' | 'past'
 
     // Modals
     const [showServiceModal, setShowServiceModal] = useState(false);
@@ -183,6 +186,7 @@ function App() {
     const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
     const [availableSlots, setAvailableSlots] = useState([]);
     const [availabilityDate, setAvailabilityDate] = useState(new Date().toISOString().split('T')[0]);
+    const [availabilitySpecialtyId, setAvailabilitySpecialtyId] = useState('');
 
     // Attendance Validation State
     const [codeToValidate, setCodeToValidate] = useState('');
@@ -299,6 +303,7 @@ function App() {
         fetchCatalogs();
         fetchPatients();
         fetchEntities();
+        fetchPatientResults();
     };
 
     const fetchCatalogs = async () => {
@@ -521,6 +526,9 @@ function App() {
         if (activeTab === 'chat') {
             fetchChats();
         }
+        if (activeTab === 'laboratories') {
+            fetchPatientResults();
+        }
     }, [activeTab]);
 
     useEffect(() => {
@@ -599,6 +607,16 @@ function App() {
         }
     };
 
+    const fetchPatientResults = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/api/patients/results`);
+            setPatientResults(Array.isArray(res.data) ? res.data : []);
+        } catch (err) {
+            console.error('Error fetching patient results:', err);
+            setPatientResults([]);
+        }
+    };
+
     // Dashboard Derived Data
     const today = new Date().toISOString().split('T')[0];
     const todaysAppointments = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime && a.start_datetime.startsWith(today)) : [];
@@ -606,12 +624,19 @@ function App() {
     // Simple Chart Data (Last 7 days)
     const getLast7Days = () => {
         const days = [];
+        const today = new Date();
         for (let i = 6; i >= 0; i--) {
-            const d = new Date();
+            const d = new Date(today);
             d.setDate(d.getDate() - i);
-            const dateStr = d.toISOString().split('T')[0];
-            const shortName = d.toLocaleDateString('es-ES', { weekday: 'short' });
-            const count = Array.isArray(appointments) ? appointments.filter(a => a.start_datetime && a.start_datetime.startsWith(dateStr)).length : 0;
+            
+            // Format date to YYYY-MM-DD in America/Bogota
+            const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'America/Bogota' });
+            const shortName = d.toLocaleDateString('es-ES', { weekday: 'short', timeZone: 'America/Bogota' });
+            
+            const count = Array.isArray(appointments) ? appointments.filter(a => 
+                a.start_datetime && a.start_datetime.startsWith(dateStr)
+            ).length : 0;
+            
             days.push({ day: shortName, count, date: dateStr });
         }
         return days;
@@ -730,8 +755,9 @@ function App() {
         const data = {
             name: formData.get('name'),
             description: formData.get('description'),
-            duration_minutes: parseInt(formData.get('duration_minutes')) || 30,
+            duration_minutes: parseInt(formData.get('duration_minutes')) || 20,
             capacity: parseInt(formData.get('capacity')) || 1,
+            color: formData.get('color') || '#3B82F6',
             service_id: formData.get('service_id') || null,
             is_active: true
         };
@@ -1104,7 +1130,8 @@ function App() {
         const data = {
             doctor_id: currentDoctor.id,
             start_time: formData.get('start_time'),
-            end_time: formData.get('end_time')
+            end_time: formData.get('end_time'),
+            specialty_id: formData.get('specialty_id') || null
         };
 
         if (isSpecialSchedule) {
@@ -1161,13 +1188,13 @@ function App() {
     const SidebarItem = ({ id, icon: Icon, label }) => (
         <button
             onClick={() => setActiveTab(id)}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all ${activeTab === id
+            className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === id
                 ? 'bg-blue-600 dark:bg-[#2B3654] text-white shadow-md'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-white'
                 }`}
         >
-            <Icon size={18} />
-            <span className="font-medium text-sm">{label}</span>
+            <Icon size={18} className="shrink-0 mt-0.5" />
+            <span className="font-medium text-sm text-left leading-tight">{label}</span>
         </button>
     );
 
@@ -1238,6 +1265,7 @@ function App() {
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">SERVICIOS MÉDICOS</div>
                     <SidebarItem id="specialties" icon={LayoutDashboard} label="Gestión de Servicios" />
                     <SidebarItem id="entities" icon={Building2} label="Gestión de EPS" />
+                    <SidebarItem id="laboratories" icon={FileText} label="Laboratorios (Resultados)" />
                     <SidebarItem id="reports" icon={BarChart2} label="Reportes" />
 
                     <div className="mt-6 mb-2 px-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">TURNOS</div>
@@ -1635,7 +1663,18 @@ function App() {
                                         <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Citas Agendadas</h2>
                                         <p className="text-slate-500 dark:text-slate-400 text-sm">Gestiona y visualiza todas las citas médicas.</p>
                                     </div>
-                                    <div className="flex gap-2 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex gap-1 bg-slate-100 dark:bg-slate-700/50 p-1 rounded-xl">
+                                            <button onClick={() => setAppointmentsView('upcoming')}
+                                                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${appointmentsView === 'upcoming' ? 'bg-white dark:bg-blue-600 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                                                Próximas
+                                            </button>
+                                            <button onClick={() => setAppointmentsView('past')}
+                                                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${appointmentsView === 'past' ? 'bg-white dark:bg-blue-600 text-blue-600 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                                                Pasadas / Historial
+                                            </button>
+                                        </div>
+                                        <div className="flex gap-2 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                                         <button
                                             onClick={() => setViewMode('list')}
                                             className={`px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-all ${viewMode === 'list'
@@ -1659,6 +1698,7 @@ function App() {
                                             <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                                         </button>
                                     </div>
+                                    </div>
                                 </header>
 
                                 {viewMode === 'list' ? (
@@ -1675,39 +1715,58 @@ function App() {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                                {appointments.map((a) => (
-                                                    <tr key={a.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 cursor-pointer transition-colors" onClick={() => { setCurrentAppointment(a); setShowAppointmentModal(true); setIsRescheduling(false); }}>
-                                                        <td className="px-6 py-4">
-                                                            <div className="font-semibold text-slate-900 dark:text-white">{a.patient_name}</div>
-                                                            <div className="text-xs text-slate-500 dark:text-slate-400">{a.patient_phone}</div>
-                                                        </td>
-                                                        <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{a.specialty_name}</td>
-                                                        <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{a.doctor_name}</td>
-                                                        <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
-                                                            {new Date(a.start_datetime).toLocaleString('es-ES', {
-                                                                day: '2-digit',
-                                                                month: '2-digit',
-                                                                year: 'numeric',
-                                                                hour: '2-digit',
-                                                                minute: '2-digit'
-                                                            })}
-                                                        </td>
-                                                        <td className="px-6 py-4">
-                                                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${a.status === 'BOOKED' ? 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400' :
-                                                                a.status === 'CONFIRMED' ? 'bg-green-500/10 text-green-600 dark:bg-green-500/20 dark:text-green-400' :
-                                                                    'bg-red-500/10 text-red-600 dark:bg-red-500/20 dark:text-red-400'
-                                                                }`}>
-                                                                {a.status}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-6 py-4 text-xs font-mono text-slate-500">{a.source}</td>
-                                                    </tr>
-                                                ))}
-                                                {appointments.length === 0 && (
-                                                    <tr>
-                                                        <td colSpan="6" className="px-6 py-10 text-center text-slate-500 italic">No hay citas agendadas aún.</td>
-                                                    </tr>
-                                                )}
+                                                {(() => {
+                                                    const filtered = appointmentsView === 'upcoming'
+                                                        ? appointments.filter(a => new Date(a.start_datetime) >= new Date() && a.status !== 'CANCELLED')
+                                                        : appointments.filter(a => new Date(a.start_datetime) < new Date() || a.status === 'CANCELLED');
+                                                    
+                                                    const sorted = filtered.sort((a, b) => appointmentsView === 'upcoming'
+                                                        ? new Date(a.start_datetime) - new Date(b.start_datetime)
+                                                        : new Date(b.start_datetime) - new Date(a.start_datetime)
+                                                    );
+
+                                                    if (sorted.length === 0) {
+                                                        return (
+                                                            <tr>
+                                                                <td colSpan="6" className="px-6 py-20 text-center text-slate-500 italic">
+                                                                    No hay citas {appointmentsView === 'upcoming' ? 'programadas' : 'en el historial'}.
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    }
+
+                                                    return sorted.map((a) => (
+                                                        <tr key={a.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 cursor-pointer transition-colors" onClick={() => { setCurrentAppointment(a); setShowAppointmentModal(true); setIsRescheduling(false); }}>
+                                                            <td className="px-6 py-4">
+                                                                <div className="font-semibold text-slate-900 dark:text-white">{a.patient_name}</div>
+                                                                <div className="text-xs text-slate-500 dark:text-slate-400">{a.patient_phone}</div>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{a.specialty_name}</td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{a.doctor_name}</td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                                                {new Date(a.start_datetime).toLocaleString('es-ES', {
+                                                                    day: '2-digit',
+                                                                    month: '2-digit',
+                                                                    year: 'numeric',
+                                                                    hour: '2-digit',
+                                                                    minute: '2-digit'
+                                                                })}
+                                                            </td>
+                                                            <td className="px-6 py-4">
+                                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${a.status === 'BOOKED' ? 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400' :
+                                                                    a.status === 'CONFIRMED' ? 'bg-green-500/10 text-green-600 dark:bg-green-500/20 dark:text-green-400' :
+                                                                        'bg-red-500/10 text-red-600 dark:bg-red-500/20 dark:text-red-400'
+                                                                    }`}>
+                                                                    {a.status}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                                                <div>{a.entidad || 'PARTICULAR'}</div>
+                                                                <div className="text-[10px] uppercase font-bold text-slate-400">{a.consultation_type || 'CONTROL'}</div>
+                                                            </td>
+                                                        </tr>
+                                                    ));
+                                                })()}
                                             </tbody>
                                         </table>
                                     </div>
@@ -1768,7 +1827,8 @@ function App() {
                                                             {dayObj.appointments.map(apt => (
                                                                 <div key={apt.id}
                                                                     onClick={(e) => { e.stopPropagation(); setCurrentAppointment(apt); setShowAppointmentModal(true); setIsRescheduling(false); }}
-                                                                    className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300 px-1.5 py-1 rounded truncate border-l-2 border-blue-500 hover:bg-blue-200 dark:hover:bg-blue-600 hover:text-blue-800 dark:hover:text-white cursor-pointer transition-colors" title={`${apt.patient_name} - ${apt.specialty_name}`}>
+                                                                    style={{ borderLeftColor: specialties.find(s => s.id === apt.specialty_id)?.color || '#3B82F6', backgroundColor: (specialties.find(s => s.id === apt.specialty_id)?.color || '#3b82f6') + '20' }}
+                                                                    className="text-[10px] text-slate-800 dark:text-slate-100 font-medium px-1.5 py-1 rounded truncate border-l-4 hover:brightness-95 dark:hover:brightness-110 cursor-pointer transition-all" title={`${apt.patient_name} - ${apt.specialty_name}`}>
                                                                     {new Date(apt.start_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {apt.patient_name.split(' ')[0]}...
                                                                 </div>
                                                             ))}
@@ -2082,7 +2142,14 @@ function App() {
                                                     <td className="px-6 py-4 flex gap-4">
                                                         <button onClick={() => { setCurrentDoctor(d); setShowDoctorModal(true); }} className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300" title="Editar Médico"><Edit size={18} /></button>
                                                         <button onClick={() => { setCurrentDoctor(d); setShowScheduleModal(true); fetchDoctorSchedules(d.id); }} className="text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300" title="Agenda"><Calendar size={18} /></button>
-                                                        <button onClick={() => { setCurrentDoctor(d); setAvailabilityDate(new Date().toISOString().split('T')[0]); fetchAvailability(d.id, new Date().toISOString().split('T')[0]); setShowAvailabilityModal(true); }} className="text-purple-500 dark:text-purple-400 hover:text-purple-600 dark:hover:text-purple-300" title="Ver Disponibilidad"><Eye size={18} /></button>
+                                                        <button onClick={() => {
+                                                             setCurrentDoctor(d);
+                                                             const initialSpecId = d.specialty_ids?.[0] || d.specialty_id;
+                                                             setAvailabilityDate(new Date().toISOString().split('T')[0]);
+                                                             setAvailabilitySpecialtyId(initialSpecId);
+                                                             fetchAvailability(d.id, new Date().toISOString().split('T')[0], initialSpecId);
+                                                             setShowAvailabilityModal(true);
+                                                         }} className="text-purple-500 dark:text-purple-400 hover:text-purple-600 dark:hover:text-purple-300" title="Ver Disponibilidad"><Eye size={18} /></button>
                                                         <button onClick={() => { setCurrentDoctor(d); setShowBlockModal(true); fetchDoctorBlocks(d.id); }} className="text-amber-500 dark:text-amber-400 hover:text-amber-600 dark:hover:text-amber-300" title="Bloqueos"><Lock size={18} /></button>
                                                         <button onClick={() => handleToggleDoctorStatus(d)} className={`${d.is_active ? 'text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300' : 'text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300'}`} title={d.is_active ? "Desactivar" : "Activar"}><Power size={18} /></button>
                                                     </td>
@@ -2126,8 +2193,8 @@ function App() {
                                     <>
                                         <header className="flex justify-between items-center">
                                             <div className="flex items-center gap-4 w-full max-w-md">
-                                                <div className="relative w-full">
-                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                                <div className="relative group">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
                                                     <input
                                                         type="text"
                                                         placeholder="Buscar servicios..."
@@ -2178,8 +2245,8 @@ function App() {
                                     <>
                                         <header className="flex justify-between items-center">
                                             <div className="flex items-center gap-4 w-full max-w-md">
-                                                <div className="relative w-full">
-                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                                <div className="relative group">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
                                                     <input
                                                         type="text"
                                                         placeholder="Buscar especialidades..."
@@ -2209,7 +2276,10 @@ function App() {
                                                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                                                     {specialties.map((s) => (
                                                         <tr key={s.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!s.is_active ? 'opacity-50' : ''}`}>
-                                                            <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{s.name}</td>
+                                                            <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                                                                <span className="w-4 h-4 rounded-full" style={{ backgroundColor: s.color || '#60A5FA' }}></span>
+                                                                {s.name}
+                                                            </td>
                                                             <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{s.service_name || 'Sin Asignar'}</td>
                                                             <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{s.duration_minutes}</td>
                                                             <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
@@ -2233,17 +2303,14 @@ function App() {
                     }
                     {
                         activeTab === 'entities' && (
-                            <div className="space-y-6">
-                                <header className="flex justify-between items-center">
+                            <div className="space-y-6 animate-in fade-in duration-500">
+                                <header className="flex justify-between items-center bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl">
                                     <div>
-                                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Gestión de EPS (Entidades)</h2>
-                                        <p className="text-slate-500 dark:text-slate-400 text-sm">Activa o desactiva las entidades que el Bot debe reconocer.</p>
+                                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Gestión de EPS</h2>
+                                        <p className="text-slate-500 dark:text-slate-400">Administra las entidades prestadoras de salud de los convenios.</p>
                                     </div>
-                                    <button
-                                        onClick={() => { setCurrentEntity(null); setShowEntityModal(true); }}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg"
-                                    >
-                                        <Plus size={20} /> Nueva EPS
+                                    <button onClick={() => { setCurrentEntity(null); setShowEntityModal(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all active:scale-95">
+                                        <Plus size={20} /> Nueva Entidad
                                     </button>
                                 </header>
 
@@ -2251,29 +2318,29 @@ function App() {
                                     <table className="w-full text-left">
                                         <thead>
                                             <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
-                                                <th className="px-6 py-4">Nombre de la Entidad</th>
-                                                <th className="px-6 py-4">Estado</th>
-                                                <th className="px-6 py-4 text-right pr-6">Acciones</th>
+                                                <th className="px-6 py-4">ID</th>
+                                                <th className="px-6 py-4">Nombre de EPS</th>
+                                                <th className="px-6 py-4">Código (Opcional)</th>
+                                                <th className="px-6 py-4 text-center">Acciones</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                            {entities.map((ent) => (
-                                                <tr key={ent.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors ${!ent.is_active ? 'opacity-50' : ''}`}>
-                                                    <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white uppercase">{ent.name}</td>
+                                            {entities.map(ent => (
+                                                <tr key={ent.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                                                    <td className="px-6 py-4 font-mono text-xs text-slate-500">#{ent.id}</td>
+                                                    <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">{ent.name}</td>
+                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{ent.code || '-'}</td>
                                                     <td className="px-6 py-4">
-                                                        <span className={`px-3 py-1 rounded inline-flex items-center gap-1 text-xs border ${ent.is_active ? 'border-green-500 text-green-500' : 'border-red-500 text-red-500'}`}>
-                                                            {ent.is_active ? 'Activa' : 'Inactiva'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 flex gap-2 justify-end">
-                                                        <button onClick={() => { setCurrentEntity(ent); setShowEntityModal(true); }} className="text-blue-500 hover:text-blue-600 border border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-1 rounded text-sm flex items-center gap-1 transition-colors"><Edit size={14} /> Editar</button>
-                                                        <button onClick={() => handleToggleEntityStatus(ent)} className={`px-3 py-1 border rounded text-sm flex items-center gap-1 transition-colors ${ent.is_active ? 'text-red-500 border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-green-500 border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`} title={ent.is_active ? "Desactivar" : "Activar"}><Power size={14} /> {ent.is_active ? "Desactivar" : "Activar"}</button>
+                                                        <div className="flex gap-2 justify-center">
+                                                            <button onClick={() => { setCurrentEntity(ent); setShowEntityModal(true); }} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"><Edit size={18} /></button>
+                                                            <button onClick={() => handleDeleteEntity(ent.id)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><Trash2 size={18} /></button>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             ))}
                                             {entities.length === 0 && (
                                                 <tr>
-                                                    <td colSpan="3" className="px-6 py-10 text-center text-slate-500 italic">No hay entidades registradas.</td>
+                                                    <td colSpan="4" className="px-6 py-20 text-center text-slate-500 italic">No hay entidades registradas. Añade una EPS.</td>
                                                 </tr>
                                             )}
                                         </tbody>
@@ -2282,6 +2349,75 @@ function App() {
                             </div>
                         )
                     }
+
+                    {activeTab === 'laboratories' && (
+                        <div className="space-y-6 animate-in fade-in duration-500">
+                            <header className="flex justify-between items-center bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl">
+                                <div>
+                                    <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Resultados de Laboratorio</h2>
+                                    <p className="text-slate-500 dark:text-slate-400">Resultados enviados por pacientes a través de WhatsApp.</p>
+                                </div>
+                                <button onClick={fetchPatientResults} className="p-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-xl transition-colors text-slate-600 dark:text-slate-300">
+                                    <RefreshCw size={20} />
+                                </button>
+                            </header>
+
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xl">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead>
+                                            <tr className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+                                                <th className="px-6 py-4">ID</th>
+                                                <th className="px-6 py-4">Paciente</th>
+                                                <th className="px-6 py-4">Teléfono</th>
+                                                <th className="px-6 py-4">Archivo</th>
+                                                <th className="px-6 py-4">Fecha</th>
+                                                <th className="px-6 py-4 text-center">Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                            {patientResults.map(result => (
+                                                <tr key={result.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                                                    <td className="px-6 py-4 font-mono text-xs text-slate-500">#{result.id}</td>
+                                                    <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">{result.patient_name}</td>
+                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{result.patient_phone}</td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                                                            <FileText size={16} />
+                                                            {result.file_name}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300 capitalize text-sm">
+                                                        {new Date(result.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex justify-center">
+                                                            <button
+                                                                onClick={async () => {
+                                                                    try {
+                                                                        const res = await axios.get(`${API_URL}/api/patients/results/${result.id}`);
+                                                                        setViewingImage(res.data);
+                                                                    } catch (err) { alert('Error cargando resultado: ' + (err.response?.data?.error || err.message)); }
+                                                                }}
+                                                                className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 rounded-lg text-xs font-bold transition-colors"
+                                                            >
+                                                                <Eye size={14} /> Ver Result.
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {patientResults.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" className="px-6 py-20 text-center text-slate-500 italic">No hay resultados de laboratorio registrados.</td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* ============ REPORTS TAB ============ */}
                     {activeTab === 'reports' && (
@@ -2761,6 +2897,13 @@ function App() {
                                         <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Capacidad por turno</label>
                                         <input name="capacity" type="number" min="1" defaultValue={currentSpecialty?.capacity || 1} required className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white placeholder-slate-400" />
                                     </div>
+                                    <div className="col-span-2 flex flex-col gap-2">
+                                        <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Color (Ayuda Visual)</label>
+                                        <div className="flex items-center gap-3">
+                                            <input name="color" type="color" defaultValue={currentSpecialty?.color || '#3B82F6'} className="w-12 h-12 rounded cursor-pointer border-0 p-0" />
+                                            <span className="text-xs text-slate-500">Haz clic para elegir el color asociado en el calendario.</span>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div className="flex flex-col gap-2">
                                     <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Descripción (Opcional)</label>
@@ -2808,15 +2951,29 @@ function App() {
                             </div>
 
                             <div className="bg-slate-50 dark:bg-slate-900/50 p-6 rounded-xl border border-slate-200 dark:border-slate-700/50 space-y-6">
-                                <div className="flex flex-col gap-2">
-                                    <label className="text-xs font-bold text-slate-500 uppercase">Consultar Fecha</label>
-                                    <input
-                                        type="date"
-                                        value={availabilityDate}
-                                        onChange={(e) => { setAvailabilityDate(e.target.value); fetchAvailability(currentDoctor.id, e.target.value); }}
-                                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white dark:[color-scheme:dark]"
-                                    />
-                                </div>
+                                     <div className="grid grid-cols-2 gap-4">
+                                         <div className="flex flex-col gap-2">
+                                             <label className="text-xs font-bold text-slate-500 uppercase">Especialidad</label>
+                                             <select
+                                                 value={availabilitySpecialtyId}
+                                                 onChange={(e) => { setAvailabilitySpecialtyId(e.target.value); fetchAvailability(currentDoctor.id, availabilityDate, e.target.value); }}
+                                                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white text-sm"
+                                             >
+                                                 {specialties.filter(s => currentDoctor?.specialty_ids?.includes(s.id) || currentDoctor?.specialty_id === s.id).map(spec => (
+                                                     <option key={spec.id} value={spec.id}>{spec.name}</option>
+                                                 ))}
+                                             </select>
+                                         </div>
+                                         <div className="flex flex-col gap-2">
+                                             <label className="text-xs font-bold text-slate-500 uppercase">Fecha</label>
+                                             <input
+                                                 type="date"
+                                                 value={availabilityDate}
+                                                 onChange={(e) => { setAvailabilityDate(e.target.value); fetchAvailability(currentDoctor.id, e.target.value, availabilitySpecialtyId); }}
+                                                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-900 dark:text-white dark:[color-scheme:dark] text-sm"
+                                             />
+                                         </div>
+                                     </div>
 
                                 <div className="space-y-3">
                                     <h4 className="font-bold text-slate-800 dark:text-slate-300 flex items-center gap-2">
@@ -3333,6 +3490,16 @@ function App() {
                                         </div>
                                     )}
 
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-xs font-bold text-slate-500 uppercase">¿A qué especialidad aplica?</label>
+                                        <select name="specialty_id" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-900 dark:text-white">
+                                            <option value="">Todas (Agenda General)</option>
+                                            {specialties.filter(s => currentDoctor?.specialty_ids?.includes(s.id) || currentDoctor?.specialty_id === s.id).map(spec => (
+                                                <option key={spec.id} value={spec.id}>{spec.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="flex flex-col gap-2">
                                             <label className="text-xs font-bold text-slate-500 uppercase">Hora Inicio</label>
@@ -3367,7 +3534,12 @@ function App() {
                                                                 <div className="bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 px-3 py-1 rounded-lg text-sm font-bold">
                                                                     {['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][sch.weekday]}
                                                                 </div>
-                                                                <span className="text-slate-900 dark:text-white font-medium">{sch.start_time.substring(0, 5)} - {sch.end_time.substring(0, 5)}</span>
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-slate-900 dark:text-white font-medium">{sch.start_time.substring(0, 5)} - {sch.end_time.substring(0, 5)}</span>
+                                                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded w-fit" style={{ backgroundColor: (sch.specialty_color || '#64748b') + '20', color: sch.specialty_color || '#64748b' }}>
+                                                                        {sch.specialty_name || 'Agenda General'}
+                                                                    </span>
+                                                                </div>
                                                             </div>
                                                             <button onClick={() => handleDeleteSchedule(sch.id)} className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-colors" title="Eliminar">
                                                                 <Trash2 size={18} />
@@ -3381,8 +3553,13 @@ function App() {
                                                 <div className="space-y-2">
                                                     <h5 className="text-xs font-bold text-slate-500 uppercase">Especiales (Fechas Específicas)</h5>
                                                     {Object.values(doctorSchedules.filter(s => s.special_date != null).reduce((acc, sch) => {
-                                                        const key = `${sch.start_time.substring(0, 5)} - ${sch.end_time.substring(0, 5)}`;
-                                                        if (!acc[key]) acc[key] = { time: key, ids: [], dates: [], start: sch.start_time, end: sch.end_time };
+                                                        const key = `${sch.specialty_id || 'base'}-${sch.start_time.substring(0, 5)}-${sch.end_time.substring(0, 5)}`;
+                                                        if (!acc[key]) acc[key] = { 
+                                                            time: `${sch.start_time.substring(0, 5)} - ${sch.end_time.substring(0, 5)}`, 
+                                                            ids: [], dates: [], 
+                                                            specialty_name: sch.specialty_name, 
+                                                            specialty_color: sch.specialty_color 
+                                                        };
                                                         acc[key].ids.push(sch.id);
                                                         acc[key].dates.push(sch.special_date);
                                                         return acc;
@@ -3392,7 +3569,12 @@ function App() {
                                                                 <div className="bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
                                                                     <Calendar size={14} /> {group.dates.length} Días
                                                                 </div>
-                                                                <span className="text-slate-900 dark:text-white font-medium">{group.time}</span>
+                                                                <div className="flex flex-col">
+                                                                    <span className="text-slate-900 dark:text-white font-medium">{group.time}</span>
+                                                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded w-fit" style={{ backgroundColor: (group.specialty_color || '#64748b') + '20', color: group.specialty_color || '#64748b' }}>
+                                                                        {group.specialty_name || 'Agenda General'}
+                                                                    </span>
+                                                                </div>
                                                             </div>
                                                             <div className="flex items-center gap-3">
                                                                 <button onClick={(e) => { e.stopPropagation(); setViewingSpecialDates(group); }} className="text-purple-500 hover:text-purple-700 dark:text-purple-400 dark:hover:text-purple-300 text-sm font-medium transition-colors">Ver Fechas</button>
@@ -3780,6 +3962,26 @@ function App() {
                     </div>
                 )
             }
+            {viewingImage && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+                    onClick={() => setViewingImage(null)}>
+                    <div className="relative max-w-5xl max-h-[90vh] w-full flex flex-col items-center justify-center animate-in zoom-in duration-300" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => setViewingImage(null)}
+                            className="absolute -top-12 right-0 p-2 text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-full">
+                            <X size={24} />
+                        </button>
+                        <div className="bg-white dark:bg-slate-800 p-2 rounded-2xl shadow-2xl overflow-hidden border border-white/20">
+                            <img src={viewingImage.file_data} alt={viewingImage.file_name || 'Resultado'}
+                                className="max-w-[85vw] max-h-[80vh] object-contain rounded-xl" />
+                        </div>
+                        {viewingImage.file_name && (
+                            <p className="text-white text-center font-bold mt-4 bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm border border-white/10">
+                                {viewingImage.file_name}
+                            </p>
+                        )}
+                    </div>
+                </div>
+            )}
         </div >
     );
 }
