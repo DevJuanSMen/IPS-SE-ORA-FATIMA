@@ -91,6 +91,21 @@ const ChatController = (client) => ({
             console.error('Error toggling bot:', err);
             res.status(500).json({ error: 'Internal server error' });
         }
+    },
+
+    // Delete chat history and session for a specific phone
+    deleteChat: async (req, res) => {
+        const { phone } = req.params;
+        try {
+            // Eliminar mensajes
+            await db.query('DELETE FROM messages WHERE phone = $1', [phone]);
+            // Eliminar la sesión
+            await db.query('DELETE FROM conversation_sessions WHERE phone = $1', [phone]);
+            res.json({ success: true });
+        } catch (err) {
+            console.error('Error deleting chat:', err);
+            res.status(500).json({ error: 'Internal server error' });
+        }
     }
 });
 

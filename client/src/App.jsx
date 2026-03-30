@@ -708,6 +708,19 @@ function App() {
         }
     };
 
+    const handleDeleteChat = async (phone) => {
+        if (!window.confirm('¿Seguro que deseas eliminar todos los mensajes de este chat? Esta acción no se puede deshacer.')) return;
+        try {
+            await axios.delete(`${API_URL}/api/chats/${phone}`);
+            if (selectedChat?.phone === phone) {
+                setSelectedChat(null);
+            }
+            fetchChats();
+        } catch (err) {
+            alert('Error al eliminar chat: ' + err.message);
+        }
+    };
+
     const toggleBot = async (phone, active) => {
         try {
             await axios.post(`${API_URL}/api/chats/${phone}/toggle-bot`, { active });
@@ -2035,6 +2048,13 @@ function App() {
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-4">
+                                                    <button
+                                                        onClick={() => handleDeleteChat(selectedChat.phone)}
+                                                        className="text-xs font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/40 px-3 py-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/60 transition-colors flex items-center gap-2 mr-1"
+                                                        title="Eliminar este chat"
+                                                    >
+                                                        <Trash2 size={14} /> Eliminar
+                                                    </button>
                                                     <button
                                                         onClick={() => {
                                                             setPatientSearch(selectedChat.phone.split('@')[0]);

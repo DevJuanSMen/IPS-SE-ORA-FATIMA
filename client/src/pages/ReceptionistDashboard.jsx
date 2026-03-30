@@ -3,7 +3,7 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 import {
     MessageSquare, Send, Power, Search, Bell, LogOut,
-    Sun, Moon, ChevronLeft, User, RefreshCw
+    Sun, Moon, ChevronLeft, User, RefreshCw, Trash2
 } from 'lucide-react';
 import LogoImage from '../../assets/Diseño sin título (9).png';
 import ProfileView from '../components/ProfileView';
@@ -103,6 +103,15 @@ export default function ReceptionistDashboard() {
             setNewMessage('');
             fetchMessages(selectedChat.phone);
         } catch (err) { alert('Error al enviar: ' + err.message); }
+    };
+
+    const handleDeleteChat = async (phone) => {
+        if (!window.confirm('¿Seguro que deseas eliminar todos los mensajes de este chat? Esta acción no se puede deshacer.')) return;
+        try {
+            await axios.delete(`${API_URL}/api/chats/${phone}`);
+            if (selectedChat?.phone === phone) setSelectedChat(null);
+            fetchChats();
+        } catch (err) { alert('Error al eliminar chat: ' + err.message); }
     };
 
     const toggleBot = async (phone, active) => {
@@ -228,6 +237,13 @@ export default function ReceptionistDashboard() {
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => handleDeleteChat(selectedChat.phone)}
+                                            className="text-xs font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/40 px-2 py-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/60 transition-colors flex items-center gap-1.5 mr-2"
+                                            title="Eliminar este chat"
+                                        >
+                                            <Trash2 size={12} /> Eliminar
+                                        </button>
                                         <span className="text-xs text-slate-400">Bot:</span>
                                         <button onClick={() => toggleBot(selectedChat.phone, !selectedChat.is_bot_active)}
                                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${selectedChat.is_bot_active ? 'bg-green-500/20 text-green-400 hover:bg-red-500/20 hover:text-red-400' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 hover:bg-green-500/20 hover:text-green-400'}`}>

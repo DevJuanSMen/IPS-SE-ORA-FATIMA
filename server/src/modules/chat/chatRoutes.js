@@ -9,6 +9,7 @@ module.exports = (client) => {
     router.get('/:phone/messages', controller.getMessages);
     router.post('/:phone/send', controller.sendMessage);
     router.post('/:phone/toggle-bot', controller.toggleBot);
+    router.delete('/:phone', controller.deleteChat);
 
     return router;
 };
