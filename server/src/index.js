@@ -115,6 +115,13 @@ client.on('authenticated', () => {
 client.on('auth_failure', msg => {
   console.error('AUTHENTICATION FAILURE', msg);
   whatsappStatus = 'disconnected';
+  io.emit('status_sync', { status: 'disconnected', message: 'Fallo de autenticación. Por favor, reinicia la sesión.' });
+  try {
+    if (fs.existsSync(SESSION_PATH)) {
+      console.log('Borrando sesión corrupta después de auth_failure...');
+      fs.rmSync(SESSION_PATH, { recursive: true, force: true, maxRetries: 3 });
+    }
+  } catch(e) { console.error('Error limpiando sesión en auth_failure:', e); }
 });
 
 const WhatsAppController = require('./modules/whatsapp/WhatsAppController');

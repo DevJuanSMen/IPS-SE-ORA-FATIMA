@@ -1232,7 +1232,14 @@ function App() {
                 </div>
             )}
 
-            {status === 'disconnected' && <div className="text-slate-400 italic">Iniciando servicios...</div>}
+            {status === 'disconnected' && (
+                <div className="flex flex-col items-center gap-4">
+                    <div className="text-slate-400 italic mb-2">Servicio desconectado o sesión bloqueada.</div>
+                    <button onClick={() => socket.emit('reset_session')} className="bg-slate-700 hover:bg-slate-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2">
+                        <RefreshCw size={18} /> Forzar Reinicio de Sesión
+                    </button>
+                </div>
+            )}
         </div>
     );
 
